@@ -1,0 +1,55 @@
+{
+  "app": {
+    "signingConfigs": [
+      {
+        "name": "default",
+        "type": "HarmonyOS",
+        "material": {
+          "certpath": "C:\\Users\\lixiang\\.ohos\\config\\default_snake-game-main_QPcZ099Tp-XC3ufSJKVphIFfyq8yrGE5yJ5ijZpvWl8=.cer",
+          "keyAlias": "debugKey",
+          "keyPassword": "YOUR_KEY_PASSWORD",
+          "profile": "C:\\Users\\lixiang\\.ohos\\config\\default_snake-game-main_QPcZ099Tp-XC3ufSJKVphIFfyq8yrGE5yJ5ijZpvWl8=.p7b",
+          "signAlg": "SHA256withECDSA",
+          "storeFile": "C:\\Users\\lixiang\\.ohos\\config\\default_snake-game-main_QPcZ099Tp-XC3ufSJKVphIFfyq8yrGE5yJ5ijZpvWl8=.p12",
+          "storePassword": "YOUR_STORE_PASSWORD"
+        }
+      }
+    ],
+    "products": [
+      {
+        "name": "default",
+        "signingConfig": "default",
+        "compatibleSdkVersion": "5.0.3(15)",
+        "runtimeOS": "HarmonyOS",
+        "buildOption": {
+          "strictMode": {
+            "caseSensitiveCheck": true,
+            "useNormalizedOHMUrl": true
+          }
+        }
+      }
+    ],
+    "buildModeSet": [
+      {
+        "name": "debug",
+      },
+      {
+        "name": "release"
+      }
+    ]
+  },
+  "modules": [
+    {
+      "name": "entry",
+      "srcPath": "./entry",
+      "targets": [
+        {
+          "name": "default",
+          "applyToProducts": [
+            "default"
+          ]
+        }
+      ]
+    }
+  ]
+}

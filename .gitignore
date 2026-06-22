@@ -1,0 +1,22 @@
+/node_modules
+/oh_modules
+/local.properties
+/.idea
+**/build
+/.hvigor
+.cxx
+/.clangd
+/.clang-format
+/.clang-tidy
+**/.test
+/.appanalyzer
+.DS_Store
+
+# 签名证书与密钥（敏感信息，不提交）
+*.p12
+*.p7b
+*.cer
+*.csr
+/material/
+/.arts/
+/.codeartsdoer/

@@ -1,0 +1,48 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <meta name="format-detection" content="telephone=no">
+    <meta name="msapplication-tap-highlight" content="no">
+    <title>Genji掘金大冒险</title>
+    <link rel="stylesheet" href="./index.css">
+</head>
+<body>
+    <div class="game-container">
+        <div class="score-container">
+            <div class="score-box">
+                <div class="title">得分</div>
+                <div id="score" class="score-display score-left">00000000</div>
+            </div>
+            <div class="high-score-box">
+                <div class="title">最高分</div>
+                <div id="highScore" class="score-display score-right">00000000</div>
+            </div>
+        </div>
+        <canvas id="gameCanvas"></canvas>
+        <div id="countdownOverlay" class="countdown-overlay" style="display: none;">3</div>
+        <div id="scoreAnimation" class="score-animation" style="display: none;">+1</div>
+        <div class="buttons">
+            <button id="startBtn" class="game-button">开始</button>
+            <button id="restartBtn" style="display: none;" class="game-button">重新开始</button>
+            <button id="pauseResumeBtn" style="display: none;" class="game-button">暂 停</button>
+        </div>
+        <div class="keyboard-hints">
+            <span class="key">↑↓←→</span> 移动
+            <span class="key">Space</span> 暂停
+            <span class="key">R</span> 重新开始
+        </div>
+    </div>
+    <div id="gameOverModal" class="modal">
+        <div class="modal-content">
+            <h2>游戏结束!</h2>
+            <p>你的分数: <span id="finalScore">0</span></p>
+            <button id="playAgainBtn">再玩一次</button>
+        </div>
+    </div>
+    <script src="./index.js"></script>
+</body>
+</html>

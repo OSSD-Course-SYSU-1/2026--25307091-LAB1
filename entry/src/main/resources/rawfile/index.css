@@ -1,0 +1,427 @@
+@font-face {
+    font-family: 'ChillBitmap7x';
+    src: url('./fonts/ChillBitmap7x.woff2') format('woff2'),
+         url('./fonts/ChillBitmap7x.woff') format('woff'),
+         url('./fonts/ChillBitmap7x.ttf') format('truetype');
+    font-weight: normal;
+    font-style: normal;
+    font-display: swap;
+}
+@font-face {
+    font-family: 'Digital Numbers Regular';
+    font-style: normal;
+    font-weight: normal;
+    src: url('./fonts/DigitalNumbers-Regular.woff') format('woff');
+}
+
+:root {
+    --background-color: #fff;
+    --body-background-color: #2C3753;
+    --text-color: #333;
+    --button-color: #2D4B63;
+    --button-hover-color: #1D3B53;
+    --border-color: #333;
+    --max-game-width: 500px;
+    --padding-size: 10px;
+    --border-radius: 5px;
+    --font-family: 'ChillBitmap7x', monospace;
+}
+
+* {
+    margin: 0;
+    padding: 0;
+    box-sizing: border-box;
+    touch-action: manipulation;
+    font-family: var(--font-family);
+    -webkit-user-select: none;
+    -moz-user-select: none;
+    -ms-user-select: none;
+    user-select: none;
+    -webkit-touch-callout: none;
+}
+
+body {
+    font-family: var(--font-family);
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    height: 100vh;
+    width: 100vw;
+    background-color: var(--body-background-color);
+    overflow: hidden;
+    transition: background-color 0.3s ease;
+}
+
+.game-container {
+    width: 100%;
+    max-width: var(--max-game-width);
+    display: flex;
+    flex-direction: column !important; /* Force column direction regardless of screen size */
+    align-items: center;
+    justify-content: flex-start; /* Changed from center to flex-start to maintain proper order */
+    padding: var(--padding-size);
+    transition: all 0.3s ease;
+    box-sizing: border-box;
+    overflow: hidden;
+    flex-wrap: nowrap;
+}
+
+.score-container {
+    display: flex;
+    justify-content: space-between;
+    margin-bottom: calc(var(--padding-size) * 1.5);
+    font-size: 16px;
+    transition: all 0.3s ease;
+    /* Ensure it stays in the flow as a block element before the canvas */
+    order: -1; /* Keep this to ensure it's always first */
+    align-self: center; /* Center align with the canvas */
+    color: #fff;
+    padding: 0;
+    position: relative; /* Added position relative */
+    z-index: 5; /* Added z-index to ensure it stays on top */
+    /* Match the width of the canvas exactly */
+    width: var(--canvas-width, auto);
+    box-sizing: border-box; /* Include padding in width calculation */
+    max-width: var(--canvas-width, auto); /* Ensure it doesn't exceed canvas width */
+}
+
+.score-box, .high-score-box {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    width: 48%;
+    color: #6698CC;
+}
+#score, #highScore {
+    font-family: 'Digital Numbers Regular';
+    color: #6698CC;
+}
+.high-score-box {
+    align-items: flex-end;
+}
+
+.score-display {
+    background-color: #1D2B3A;
+    color: #9AAFC2;
+    padding: 6px 8px;
+    border-radius: 4px;
+    border: 4px solid #314D74;
+    margin-top: 5px;
+    font-family: monospace;
+    letter-spacing: 0px;
+    box-shadow: inset 8px 16px 0px #1D2E42;
+    width: 100%;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    font-size: 13px; /* Smaller font size to prevent overflow */
+    white-space: nowrap; /* Prevent line breaks */
+    box-sizing: border-box; /* Include padding in width calculation */
+}
+
+.score-left {
+    text-align: left;
+}
+
+.score-right {
+    text-align: right;
+}
+
+#gameCanvas {
+    border: none;
+    background-color: var(--background-color);
+    display: block;
+    /* 移除宽度百分比和纵横比，因为现在我们在JS中设置了精确的尺寸 */
+    image-rendering: optimizeSpeed;             /* 一般浏览器 */
+    image-rendering: -moz-crisp-edges;          /* Firefox */
+    image-rendering: -webkit-optimize-contrast; /* Safari */
+    image-rendering: -o-crisp-edges;            /* Opera */
+    image-rendering: pixelated;                 /* Chrome */
+    image-rendering: crisp-edges;               /* 标准语法 */
+    -ms-interpolation-mode: nearest-neighbor;   /* IE */
+    box-shadow: 0 4px 8px rgba(0, 0, 0, 0.1);
+    transition: all 0.3s ease;
+    /* 移除transform-origin，它可能导致不对称 */
+    margin: 0 auto;
+    /* 确保没有任何内部或外部边距导致不对称 */
+    padding: 0;
+    /* 移除aspect-ratio属性，防止强制拉伸 */
+}
+
+.buttons {
+    margin-top: calc(var(--padding-size) * 2);
+    display: flex;
+    gap: calc(var(--padding-size) * 2);
+    justify-content: center;
+    width: var(--canvas-width, 100%);
+    max-width: var(--canvas-width, 100%);
+    padding: 0;
+    align-self: center;
+    box-sizing: border-box;
+}
+
+.game-button {
+    padding: 12px 0;
+    font-size: 16px;
+    background-color: #2D4B63;
+    color: white;
+    border: none;
+    border-radius: 5px;
+    cursor: pointer;
+    transition: background-color 0.2s ease, transform 0.1s ease;
+    width: 48%;
+    text-align: center;
+    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.2);
+}
+
+.game-button:active {
+    background-color: #1D3B53;
+    transform: scale(0.98);
+}
+
+/* 键盘快捷键提示（平板/2in1 时显示） */
+.keyboard-hints {
+    display: none;
+    margin-top: calc(var(--padding-size) * 1.5);
+    gap: 8px;
+    justify-content: center;
+    flex-wrap: wrap;
+    width: var(--canvas-width, 100%);
+    max-width: var(--canvas-width, 100%);
+}
+
+.keyboard-hints .key {
+    background: #3A5068;
+    color: #AABBCC;
+    padding: 4px 10px;
+    border-radius: 4px;
+    font-size: 12px;
+    border: 1px solid #4A6078;
+}
+
+.modal {
+    display: none;
+    position: fixed;
+    z-index: 100;
+    left: 0;
+    top: 0;
+    width: 100%;
+    height: 100%;
+    background-color: rgba(0, 0, 0, 0.7);
+    justify-content: center;
+    align-items: center;
+}
+
+.modal-content {
+    background-color: #fefefe;
+    padding: calc(var(--padding-size) * 2);
+    border-radius: calc(var(--border-radius) * 2);
+    text-align: center;
+    width: 80%;
+    max-width: 300px;
+    box-shadow: 0 5px 15px rgba(0, 0, 0, 0.3);
+    animation: modal-appear 0.3s ease-out;
+}
+
+@keyframes modal-appear {
+    from {
+        opacity: 0;
+        transform: scale(0.8);
+    }
+    to {
+        opacity: 1;
+        transform: scale(1);
+    }
+}
+
+.modal h2 {
+    margin-bottom: calc(var(--padding-size) * 2);
+    color: var(--text-color);
+    font-weight: bold;
+}
+
+.modal p {
+    margin-bottom: calc(var(--padding-size) * 2);
+    font-size: 18px;
+    color: var(--text-color);
+}
+
+.modal button {
+    padding: var(--padding-size) calc(var(--padding-size) * 2);
+    font-size: 16px;
+    background-color: var(--button-color);
+    color: white;
+    border: none;
+    border-radius: var(--border-radius);
+    cursor: pointer;
+    transition: background-color 0.2s, transform 0.1s;
+}
+
+.modal button:hover {
+    background-color: var(--button-hover-color);
+}
+
+.modal button:active {
+    transform: scale(0.98);
+}
+
+/* 更新倒计时样式 */
+.countdown-overlay {
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    width: 100px;
+    height: 100px;
+    background-color: rgba(0, 0, 0, 0.7);
+    border-radius: 50%;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    z-index: 50;
+    font-size: 60px;
+    font-weight: bold;
+    color: white;
+    animation: pulse 0.8s infinite alternate;
+    box-shadow: 0 0 20px rgba(0, 0, 0, 0.3);
+}
+
+@keyframes pulse {
+    from {
+        opacity: 0.8;
+        transform: translate(-50%, -50%) scale(0.9);
+    }
+    to {
+        opacity: 1;
+        transform: translate(-50%, -50%) scale(1.1);
+    }
+}
+
+/* 添加得分动画 */
+.score-animation {
+    position: absolute;
+    font-size: 28px;
+    font-weight: bold;
+    color: #4CAF50;
+    z-index: 100;
+    animation: float-up 1s ease-out forwards;
+    text-shadow: 0 0 5px rgba(255, 255, 255, 0.7);
+    pointer-events: none;
+}
+
+@keyframes float-up {
+    0% {
+        opacity: 1;
+        transform: translateY(0) scale(1);
+    }
+    50% {
+        opacity: 1;
+        transform: translateY(-30px) scale(1.2);
+    }
+    100% {
+        opacity: 0;
+        transform: translateY(-60px) scale(1);
+    }
+}
+
+/* ========== 响应式适配 ========== */
+
+/* --- 小屏手机 (max-width: 375px) --- */
+@media (max-width: 375px) {
+    :root {
+        --padding-size: 8px;
+    }
+    
+    .score-container {
+        font-size: 16px;
+        width: 90%;
+    }
+    
+    .buttons {
+        gap: var(--padding-size);
+    }
+    
+    .buttons button {
+        padding: calc(var(--padding-size) * 0.8) calc(var(--padding-size) * 1.5);
+        font-size: 14px;
+    }
+}
+
+/* --- 极小屏 (max-width: 320px) --- */
+@media (max-width: 320px) {
+    .score-container {
+        font-size: 14px;
+    }
+    
+    .buttons button {
+        padding: calc(var(--padding-size) * 0.7) calc(var(--padding-size) * 1.2);
+        font-size: 13px;
+    }
+}
+
+/* --- 平板/大屏 (min-width: 600px) --- */
+@media (min-width: 600px) {
+    :root {
+        --max-game-width: 700px;
+        --padding-size: 16px;
+    }
+    
+    .game-container {
+        padding: 20px;
+    }
+    
+    .score-container {
+        font-size: 20px;
+    }
+    
+    .game-button {
+        padding: 16px 0;
+        font-size: 20px;
+    }
+    
+    .modal-content {
+        max-width: 400px;
+        padding: 32px;
+    }
+    
+    .modal p {
+        font-size: 22px;
+    }
+}
+
+/* --- 2in1 / 大平板 (min-width: 840px) --- */
+@media (min-width: 840px) {
+    :root {
+        --max-game-width: 800px;
+        --padding-size: 20px;
+    }
+    
+    .score-container {
+        font-size: 24px;
+    }
+    
+    .game-button {
+        padding: 18px 0;
+        font-size: 22px;
+    }
+    
+    /* 键盘提示（宽屏时显示） */
+    .keyboard-hints {
+        display: flex;
+    }
+}
+
+/* --- 桌面级 (min-width: 1025px) --- */
+@media (min-width: 1025px) {
+    :root {
+        --max-game-width: 900px;
+    }
+    
+    body {
+        background-color: #1A2238;
+    }
+    
+    .game-container {
+        border-radius: 12px;
+        box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3);
+    }
+}
