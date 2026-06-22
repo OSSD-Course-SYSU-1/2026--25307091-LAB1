@@ -70,19 +70,17 @@ body {
     display: flex;
     justify-content: space-between;
     margin-bottom: calc(var(--padding-size) * 1.5);
-    font-size: 16px;
+    font-size: calc(16px * var(--font-scale, 1));
     transition: all 0.3s ease;
-    /* Ensure it stays in the flow as a block element before the canvas */
-    order: -1; /* Keep this to ensure it's always first */
-    align-self: center; /* Center align with the canvas */
+    order: -1;
+    align-self: center;
     color: #fff;
     padding: 0;
-    position: relative; /* Added position relative */
-    z-index: 5; /* Added z-index to ensure it stays on top */
-    /* Match the width of the canvas exactly */
+    position: relative;
+    z-index: 5;
     width: var(--canvas-width, auto);
-    box-sizing: border-box; /* Include padding in width calculation */
-    max-width: var(--canvas-width, auto); /* Ensure it doesn't exceed canvas width */
+    box-sizing: border-box;
+    max-width: var(--canvas-width, auto);
 }
 
 .score-box, .high-score-box {
@@ -92,6 +90,42 @@ body {
     width: 48%;
     color: #6698CC;
 }
+
+.level-display {
+    text-align: center;
+    background-color: #1D2B3A;
+    color: #9AAFC2;
+    padding: calc(6px * var(--font-scale, 1)) calc(8px * var(--font-scale, 1));
+    border-radius: 4px;
+    border: 4px solid #314D74;
+    margin-bottom: calc(4px * var(--font-scale, 1));
+    font-family: 'Digital Numbers Regular', monospace;
+    letter-spacing: calc(1px * var(--font-scale, 1));
+    box-shadow: inset 8px 16px 0px #1D2E42;
+    width: var(--canvas-width, auto);
+    box-sizing: border-box;
+    font-size: calc(14px * var(--font-scale, 1));
+}
+
+.level-info {
+    text-align: center;
+    background-color: #1D2B3A;
+    color: #9AAFC2;
+    padding: calc(4px * var(--font-scale, 1)) calc(8px * var(--font-scale, 1));
+    border-radius: 4px;
+    border: 4px solid #314D74;
+    margin-bottom: calc(6px * var(--font-scale, 1));
+    font-family: 'Digital Numbers Regular', monospace;
+    font-size: calc(11px * var(--font-scale, 1));
+    letter-spacing: calc(0.5px * var(--font-scale, 1));
+    box-shadow: inset 4px 8px 0px #1D2E42;
+    width: var(--canvas-width, auto);
+    box-sizing: border-box;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
 #score, #highScore {
     font-family: 'Digital Numbers Regular';
     color: #6698CC;
@@ -103,7 +137,7 @@ body {
 .score-display {
     background-color: #1D2B3A;
     color: #9AAFC2;
-    padding: 6px 8px;
+    padding: calc(6px * var(--font-scale, 1)) calc(8px * var(--font-scale, 1));
     border-radius: 4px;
     border: 4px solid #314D74;
     margin-top: 5px;
@@ -113,9 +147,9 @@ body {
     width: 100%;
     overflow: hidden;
     text-overflow: ellipsis;
-    font-size: 13px; /* Smaller font size to prevent overflow */
-    white-space: nowrap; /* Prevent line breaks */
-    box-sizing: border-box; /* Include padding in width calculation */
+    font-size: calc(13px * var(--font-scale, 1));
+    white-space: nowrap;
+    box-sizing: border-box;
 }
 
 .score-left {
@@ -160,8 +194,8 @@ body {
 }
 
 .game-button {
-    padding: 12px 0;
-    font-size: 16px;
+    padding: calc(12px * var(--font-scale, 1)) 0;
+    font-size: calc(16px * var(--font-scale, 1));
     background-color: #2D4B63;
     color: white;
     border: none;
@@ -194,7 +228,7 @@ body {
     color: #AABBCC;
     padding: 4px 10px;
     border-radius: 4px;
-    font-size: 12px;
+    font-size: calc(12px * var(--font-scale, 1));
     border: 1px solid #4A6078;
 }
 
@@ -241,14 +275,13 @@ body {
 
 .modal p {
     margin-bottom: calc(var(--padding-size) * 2);
-    font-size: 18px;
+    font-size: calc(18px * var(--font-scale, 1));
     color: var(--text-color);
 }
 
 .modal button {
     padding: var(--padding-size) calc(var(--padding-size) * 2);
-    font-size: 16px;
-    background-color: var(--button-color);
+    font-size: calc(16px * var(--font-scale, 1));
     color: white;
     border: none;
     border-radius: var(--border-radius);
@@ -278,10 +311,7 @@ body {
     justify-content: center;
     align-items: center;
     z-index: 50;
-    font-size: 60px;
-    font-weight: bold;
-    color: white;
-    animation: pulse 0.8s infinite alternate;
+    font-size: calc(60px * var(--font-scale, 1));
     box-shadow: 0 0 20px rgba(0, 0, 0, 0.3);
 }
 
@@ -299,7 +329,7 @@ body {
 /* 添加得分动画 */
 .score-animation {
     position: absolute;
-    font-size: 28px;
+    font-size: calc(28px * var(--font-scale, 1));
     font-weight: bold;
     color: #4CAF50;
     z-index: 100;

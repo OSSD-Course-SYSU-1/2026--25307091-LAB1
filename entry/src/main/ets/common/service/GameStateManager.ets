@@ -15,6 +15,8 @@ class GameStateManager {
   private currentGameState: GameState | null = null;
   // 标记状态是否已经初始化
   private isInitialized: boolean = false;
+  // 状态版本号，每次更新递增，防止分布式数据回滚
+  private stateVersion: number = 0;
 
   private constructor() {
     // 私有构造函数，确保单例
@@ -35,9 +37,11 @@ class GameStateManager {
    * @param gameState 新的游戏状态
    */
   public updateGameState(gameState: GameState): void {
+    this.stateVersion++;
+    gameState.stateVersion = this.stateVersion; // 注入版本号，防止分布式回滚
     this.currentGameState = gameState;
     this.isInitialized = true;
-    hilog.info(DOMAIN, TAG, `游戏状态已更新: ${JSON.stringify(gameState)}`);
+    hilog.info(DOMAIN, TAG, `游戏状态已更新, 版本: ${this.stateVersion}`);
   }
 
   /**

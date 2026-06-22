@@ -77,7 +77,7 @@ function checkBoundaryCollision(head) {
       direction: direction,
       entryBoundary: getOppositeBoundary(boundaryCollision)
     };
-    window.JSBridge?.triggerBoundaryTraversal(JSON.stringify(gameState));
+    window.JSBridge?.gameOver(JSON.stringify(gameState));
     return true;
   }
   return false;
@@ -135,7 +135,7 @@ onContinue(wantParam: Record<string, Object>): AbilityConstant.OnContinueResult 
 onCreate(want: Want) {
   if (want.parameters?.data) {
     const gameData = JSON.parse(want.parameters.data as string);
-    this.webController.runJavaScript(`restoreGameState(${JSON.stringify(gameData)})`);
+    this.webController.runJavaScript(`initGameDataFromNative(${JSON.stringify(gameData)})`);
   }
 }
 ```
@@ -213,16 +213,16 @@ Web({ src: $rawfile('index.html'), controller: this.webController })
   .javaScriptProxy({
     object: this.nativeObject,
     name: 'JSBridge',
-    methodList: ['gameOver', 'updateGameState', 'triggerBoundaryTraversal'],
+    methodList: ['gameOver', 'updateGameState'],
     controller: this.webController
   })
 
 // Web端：调用原生能力
-window.JSBridge?.triggerBoundaryTraversal(gameStateJson);
+window.JSBridge?.gameOver(gameStateJson);
 
 // Native端：向Web注入数据
 this.webController.runJavaScript(`
-  restoreGameState(${JSON.stringify(gameData)})
+  initGameDataFromNative(${JSON.stringify(gameData)})
 `);
 ```
 
@@ -260,7 +260,7 @@ onCreate(want: Want) {
     // 验证数据有效性
     if (Date.now() - timestamp < 10000) { // 10秒内有效
       this.webController.runJavaScript(`
-        restoreGameState(${JSON.stringify(gameData)})
+        initGameDataFromNative(${JSON.stringify(gameData)})
       `);
       Logger.info('Game state restored successfully');
     }

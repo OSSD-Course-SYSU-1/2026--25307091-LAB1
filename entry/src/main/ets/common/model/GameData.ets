@@ -26,6 +26,7 @@ export interface GameState {
   autoStart: boolean;
   boundaryCollision?: string; // 边界碰撞信息，表示碰撞的是哪个边界（left/right/top/bottom）
   entryBoundary?: string;  // 入口边界信息，表示从哪个边界进入（left/right/top/bottom）
+  stateVersion?: number;   // 状态版本号，用于防止分布式数据回滚
 }
 
 export class GameData {
@@ -42,6 +43,7 @@ export class GameData {
   autoStart: boolean = false;
   boundaryCollision?: string; // 边界碰撞信息
   entryBoundary?: string;  // 入口边界信息
+  stateVersion?: number;   // 状态版本号
 
   constructor(gameState?: GameState) {
 
@@ -59,6 +61,7 @@ export class GameData {
       this.autoStart = gameState.autoStart || false;
       this.boundaryCollision = gameState.boundaryCollision;
       this.entryBoundary = gameState.entryBoundary;
+      this.stateVersion = gameState.stateVersion || 0;
     }
   }
 }

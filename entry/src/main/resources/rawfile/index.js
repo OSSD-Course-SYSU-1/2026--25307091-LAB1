@@ -43,8 +43,94 @@ document.addEventListener('DOMContentLoaded', () => {
         PORTRAIT_CANVAS_HEIGHT_RATIO: 0.6,  // 竖屏画布高度比例
         LANDSCAPE_CANVAS_WIDTH_RATIO: 0.6,  // 横屏画布宽度比例
         CANVAS_ASPECT_RATIO: { WIDTH: 10, HEIGHT: 15 }, // 画布宽高比 10:15
-        SWIPE_THRESHOLD: 0              // 滑动阈值
+        SWIPE_THRESHOLD: 0,             // 滑动阈值
+        // 双食物系统
+        SHRINK_FOOD_PROBABILITY: 0.5,    // 有毒食物出现概率（50%）
+        // 迭代难度系统（积分+时间+历史战绩三驱动）
+        ITERATION_SCORE_STEP: 500,
+        ITERATION_TIME_STEP: 45,
+        ITERATION_MAX_LEVEL: 8,
+        BASE_FOOD_POINTS: 100,
+        LEVEL_FOOD_BONUS: 50,
+        BASE_SHRINK_SEGMENTS: 2,
+        LEVEL_SHRINK_STEP: 2,
+        TOXIC_PENALTY_RATIO: 0.5,
+        BASE_FOOD_INTERVAL: 15,
+        MIN_FOOD_INTERVAL: 3,
+        LEVEL_INTERVAL_STEP: 1.5,
+        HISTORY_BONUS_DIVISOR: 300       // 历史均分/300 = 额外等级
     };
+    
+    // ================= 自学习动态参数 =================
+    let learningParams = {
+        scoreStep: CONSTANTS.ITERATION_SCORE_STEP,
+        timeStep: CONSTANTS.ITERATION_TIME_STEP,
+        intervalStep: CONSTANTS.LEVEL_INTERVAL_STEP,
+        shrinkProb: CONSTANTS.SHRINK_FOOD_PROBABILITY,
+        gameCount: 0,
+        recentResults: []  // 最近5场 {score, duration}
+    };
+    
+    function loadLearningParams() {
+        try {
+            const saved = JSON.parse(localStorage.getItem('snakeLearning') || 'null');
+            if (saved) {
+                learningParams.scoreStep = saved.scoreStep || learningParams.scoreStep;
+                learningParams.timeStep = saved.timeStep || learningParams.timeStep;
+                learningParams.intervalStep = saved.intervalStep || learningParams.intervalStep;
+                learningParams.shrinkProb = saved.shrinkProb || learningParams.shrinkProb;
+                learningParams.gameCount = saved.gameCount || 0;
+                learningParams.recentResults = saved.recentResults || [];
+            }
+        } catch (e) {}
+    }
+    
+    function saveLearningParams() {
+        try {
+            localStorage.setItem('snakeLearning', JSON.stringify({
+                scoreStep: learningParams.scoreStep,
+                timeStep: learningParams.timeStep,
+                intervalStep: learningParams.intervalStep,
+                shrinkProb: learningParams.shrinkProb,
+                gameCount: learningParams.gameCount,
+                recentResults: learningParams.recentResults
+            }));
+        } catch (e) {}
+    }
+    
+    // 每5场自我更新一次
+    function updateLearningModel(finalScore, duration) {
+        learningParams.recentResults.push({ score: finalScore, duration: duration });
+        if (learningParams.recentResults.length > 5) learningParams.recentResults.shift();
+        learningParams.gameCount++;
+        saveLearningParams();
+        
+        if (learningParams.gameCount % 5 !== 0 || learningParams.recentResults.length < 5) return;
+        
+        const avgScore = learningParams.recentResults.reduce((s, r) => s + r.score, 0) / 5;
+        const avgTime = learningParams.recentResults.reduce((s, r) => s + r.duration, 0) / 5;
+        
+        // AI自适应：玩得好→加难度，玩得差→降难度
+        if (avgScore > 2500 && avgTime > 90) {
+            learningParams.scoreStep = Math.min(800, learningParams.scoreStep + 80);
+            learningParams.timeStep = Math.max(20, learningParams.timeStep - 6);
+            learningParams.intervalStep = Math.min(2.5, learningParams.intervalStep + 0.2);
+            learningParams.shrinkProb = Math.min(0.7, learningParams.shrinkProb + 0.03);
+            console.log('📈 AI: 你太强了，难度提升！');
+        } else if (avgScore > 1500) {
+            learningParams.scoreStep = Math.min(800, learningParams.scoreStep + 40);
+            learningParams.shrinkProb = Math.min(0.7, learningParams.shrinkProb + 0.02);
+            console.log('📊 AI: 微调难度中...');
+        } else if (avgScore < 600) {
+            learningParams.scoreStep = Math.max(200, learningParams.scoreStep - 60);
+            learningParams.timeStep = Math.min(55, learningParams.timeStep + 8);
+            learningParams.intervalStep = Math.max(0.8, learningParams.intervalStep - 0.2);
+            learningParams.shrinkProb = Math.max(0.3, learningParams.shrinkProb - 0.04);
+            console.log('📉 AI: 放点水，难度降低~');
+        }
+        saveLearningParams();
+        historyLevel = loadHistoryLevel();
+    }
 
     /**
      * 根据断点和可用空间计算最优网格尺寸
@@ -282,7 +368,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
     // 游戏变量
     let snake = [];
-    let food = {};
+    let foods = [];
     let gridSize = 20;
     let tileCountX = CONSTANTS.GRID_COUNT_X;
     let tileCountY = CONSTANTS.GRID_COUNT_Y;
@@ -300,6 +386,16 @@ document.addEventListener('DOMContentLoaded', () => {
     
     // 添加标记，防止重复触发游戏结束
     let isGameOverHandled = false;
+    
+    // 智能同步：记录上次常规同步时间，控制同步频率
+    let lastRegularSyncTime = 0;
+    
+    // 迭代难度系统变量
+    let elapsedSeconds = 0;
+    let elapsedTimer = null;
+    let foodSpawnTimer = null;
+    let iterationLevel = 0;
+    let historyLevel = 0;  // 历史战绩贡献的等级
     
     // 游戏结束动画状态
     let gameOverAnimationState = {
@@ -539,7 +635,9 @@ document.addEventListener('DOMContentLoaded', () => {
                 return false;
             }
             
-            if (!gameData.food || typeof gameData.food.x !== 'number' || typeof gameData.food.y !== 'number') {
+            // 食物数组校验：支持单食物和多食物
+            const foodData = gameData.food;
+            if (!foodData || (Array.isArray(foodData) ? foodData.length === 0 : typeof foodData.x !== 'number')) {
                 console.error('无效的食物数据');
                 return false;
             }
@@ -579,8 +677,9 @@ document.addEventListener('DOMContentLoaded', () => {
             // 保存完整的蛇身数据
             const fullSnake = gameData.snake.slice();
             
-            // 应用接收到的游戏数据（不包括蛇身，稍后渐进处理）
-            food = gameData.food;
+            // 应用接收到的游戏数据
+            foods = Array.isArray(gameData.food) ? gameData.food.map(f => ({...f})) : 
+                    (gameData.food ? [{...gameData.food}] : []);
             direction = gameData.direction || 'right';
             nextDirection = direction;
             score = gameData.score || 0;
@@ -793,7 +892,7 @@ document.addEventListener('DOMContentLoaded', () => {
         // 构建完整的游戏状态对象
         const gameState = {
             snake: snake.slice(), // 复制蛇的数组，避免引用问题
-            food: { ...food },    // 复制食物对象
+            food: foods.map(f => ({ x: f.x, y: f.y, type: f.type })),
             direction: direction,
             score: score,
             speed: gameSpeed,
@@ -807,17 +906,119 @@ document.addEventListener('DOMContentLoaded', () => {
     };
     
     // 主动向Native同步游戏状态的函数
-    function syncGameStateToNative(forceSync = false) {
-        // 只在游戏进行中且未暂停时同步状态，或在强制同步时
-        if (window.JSBridge && typeof window.JSBridge.updateGameState === 'function' && 
-            (forceSync || (gameStarted && !gameOver && !gamePaused))) {
-            try {
-                const gameState = window.getCurrentGameState();
-                window.JSBridge.updateGameState(JSON.stringify(gameState));
-            } catch (e) {
-                console.error('同步游戏状态到Native失败:', e);
+    // eventType: 'critical'（关键事件，立即同步）| 'regular'（常规更新，1秒节流）
+    function syncGameStateToNative(forceSync = false, eventType = 'regular') {
+        if (window.JSBridge && typeof window.JSBridge.updateGameState === 'function') {
+            const isCritical = forceSync || eventType === 'critical';
+            const now = Date.now();
+            
+            // 关键事件或强制同步 → 立即同步；常规事件 → 1秒节流
+            if (!isCritical && now - lastRegularSyncTime < 1000) {
+                return; // 常规更新节流中，跳过
+            }
+            
+            // 只在游戏进行中且未暂停时同步状态，或强制/关键事件
+            if (isCritical || (gameStarted && !gameOver && !gamePaused)) {
+                try {
+                    const gameState = window.getCurrentGameState();
+                    window.JSBridge.updateGameState(JSON.stringify(gameState));
+                    lastRegularSyncTime = now;
+                } catch (e) {
+                    console.error('同步游戏状态到Native失败:', e);
+                }
             }
         }
+    }
+    
+    // ================= 迭代难度系统 =================
+    
+    // 加载历史战绩等级
+    function loadHistoryLevel() {
+        if (learningParams.recentResults.length === 0) return 0;
+        const avg = learningParams.recentResults.reduce((s, r) => s + r.score, 0) / learningParams.recentResults.length;
+        return Math.floor(avg / CONSTANTS.HISTORY_BONUS_DIVISOR);
+    }
+    
+    // 保存游戏结果 + 触发AI学习
+    function saveGameResult(finalScore, duration) {
+        updateLearningModel(finalScore, duration);
+    }
+    
+    // 计算当前迭代等级
+    function getIterationLevel() {
+        const scoreLevel = Math.floor(score / learningParams.scoreStep);
+        const timeLevel = Math.floor(elapsedSeconds / learningParams.timeStep);
+        return Math.min(scoreLevel + timeLevel + historyLevel, CONSTANTS.ITERATION_MAX_LEVEL);
+    }
+    
+    // 普通食物分值
+    function getNormalPoints() {
+        return CONSTANTS.BASE_FOOD_POINTS + getIterationLevel() * CONSTANTS.LEVEL_FOOD_BONUS;
+    }
+    
+    // 毒食物扣分（普通奖励的50%）
+    function getToxicPenalty() {
+        return -Math.floor(getNormalPoints() * CONSTANTS.TOXIC_PENALTY_RATIO);
+    }
+    
+    // 毒食物缩短节数
+    function getShrinkSegments() {
+        return CONSTANTS.BASE_SHRINK_SEGMENTS + Math.floor(getIterationLevel() / CONSTANTS.LEVEL_SHRINK_STEP);
+    }
+    
+    // 食物刷新间隔（秒）
+    function getFoodInterval() {
+        return Math.max(CONSTANTS.MIN_FOOD_INTERVAL,
+            CONSTANTS.BASE_FOOD_INTERVAL - getIterationLevel() * learningParams.intervalStep);
+    }
+    
+    // 启动耗时计时器
+    function startElapsedTimer() {
+        elapsedSeconds = 0;
+        if (elapsedTimer) clearInterval(elapsedTimer);
+        elapsedTimer = setInterval(() => {
+            if (!gamePaused && gameStarted && !gameOver) {
+                elapsedSeconds++;
+                iterationLevel = getIterationLevel();
+                updateLevelDisplay();
+            }
+        }, 1000);
+    }
+    
+    // 停止耗时计时器
+    function stopElapsedTimer() {
+        if (elapsedTimer) { clearInterval(elapsedTimer); elapsedTimer = null; }
+    }
+    
+    // 更新等级显示
+    function updateLevelDisplay() {
+        const levelEl = document.getElementById('levelDisplay');
+        const infoEl = document.getElementById('levelInfo');
+        const lv = getIterationLevel();
+        const nextScore = (Math.floor(score / learningParams.scoreStep) + 1) * learningParams.scoreStep;
+        if (levelEl) levelEl.textContent = `Lv.${lv}`;
+        if (infoEl) {
+            infoEl.textContent = `🍎+${getNormalPoints()}  ☠${getToxicPenalty()}  ✂-${getShrinkSegments()}  ▶Lv.${lv+1}:${nextScore}分`;
+        }
+    }
+    
+    // 启动食物刷新计时器
+    function startFoodSpawnTimer() {
+        if (foodSpawnTimer) clearInterval(foodSpawnTimer);
+        const scheduleNext = () => {
+            foodSpawnTimer = setTimeout(() => {
+                if (gameStarted && !gameOver && !gamePaused) {
+                    generateFood();
+                    draw();
+                }
+                scheduleNext();
+            }, getFoodInterval() * 1000);
+        };
+        scheduleNext();
+    }
+    
+    function stopFoodSpawnTimer() {
+        if (foodSpawnTimer) { clearTimeout(foodSpawnTimer); foodSpawnTimer = null; }
     }
     
     // ================= 屏幕适配功能 =================
@@ -874,6 +1075,8 @@ document.addEventListener('DOMContentLoaded', () => {
         // 将画布尺寸设置为CSS变量，便于其他元素使用
         document.documentElement.style.setProperty('--canvas-width', `${canvasWidth}px`);
         document.documentElement.style.setProperty('--canvas-height', `${canvasHeight}px`);
+        // 字体自适应缩放（基准宽度375px）
+        document.documentElement.style.setProperty('--font-scale', `${canvasWidth / 375}`);
         
         // 设置画布的实际像素尺寸，考虑设备像素比例(DPR)
         canvas.width = canvasWidth * dpr;
@@ -921,6 +1124,9 @@ document.addEventListener('DOMContentLoaded', () => {
 
     // 初始化游戏
     function initGame() {
+        // 加载自学习参数
+        loadLearningParams();
+        
         // 获取历史最高分
         highScore = localStorage.getItem('snakeHighScore') || 0;
         highScore = parseInt(highScore);
@@ -957,6 +1163,9 @@ document.addEventListener('DOMContentLoaded', () => {
         gameOverAnimationState.visibleSegments = 0;
         gameOverAnimationState.boundaryDirection = null;
         
+        // 清空食物数组
+        foods = [];
+        
         // 初始化蛇的位置
         snake = [];
         const middlePosX = Math.floor(CONSTANTS.GRID_COUNT_X / 2);
@@ -966,6 +1175,9 @@ document.addEventListener('DOMContentLoaded', () => {
             snake.push({ x: middlePosX - i, y: middlePosY });
         }
         
+        generateFood();
+        // 初始多生成几个食物
+        generateFood();
         generateFood();
         direction = 'right';
         nextDirection = 'right';
@@ -980,6 +1192,13 @@ document.addEventListener('DOMContentLoaded', () => {
         
         // 更新UI状态
         pauseResumeBtn.style.display = 'none';
+        
+        // 重置迭代系统
+        stopElapsedTimer();
+        stopFoodSpawnTimer();
+        elapsedSeconds = 0;
+        iterationLevel = 0;
+        updateLevelDisplay();
         
         // 在状态重置后立即同步到Native
         syncGameStateToNative(true);
@@ -1069,7 +1288,16 @@ document.addEventListener('DOMContentLoaded', () => {
         gameStarted = true;
         gameOver = false;
         isGameOverHandled = false;
-        gamePaused = false; // 确保游戏不处于暂停状态
+        gamePaused = false;
+        
+        // 加载历史战绩等级
+        historyLevel = loadHistoryLevel();
+        iterationLevel = getIterationLevel();
+        updateLevelDisplay();
+        
+        // 启动计时器
+        startElapsedTimer();
+        startFoodSpawnTimer();
         startBtn.style.display = 'none';
         restartBtn.style.display = 'inline-block';
         pauseResumeBtn.style.display = 'inline-block';
@@ -1094,67 +1322,6 @@ document.addEventListener('DOMContentLoaded', () => {
         console.log('游戏循环已创建，间隔:', gameSpeed);
     }
 
-    // 显示得分动画
-    function showScoreAnimation(x, y, points) {
-        // 确保分数显示为整数
-        scoreAnimation.textContent = points > 0 ? `+${points}` : points;
-        
-        // 调整位置使其更加明显
-        scoreAnimation.style.left = `${x}px`;
-        scoreAnimation.style.top = `${y - 20}px`; // 往上偏移一点以便更清晰地看到
-        scoreAnimation.style.display = 'block';
-        
-        // 重置动画
-        scoreAnimation.style.animation = 'none';
-        scoreAnimation.offsetHeight; // 触发重绘
-        scoreAnimation.style.animation = 'float-up 1s ease-out forwards';
-        
-        // 动画结束后隐藏
-        setTimeout(() => {
-            scoreAnimation.style.display = 'none';
-        }, CONSTANTS.ANIMATION_DURATION);
-    }
-
-    // 游戏结束处理
-    function handleGameOver() {
-        // 防止重复触发游戏结束逻辑
-        if (isGameOverHandled) return;
-        isGameOverHandled = true;
-        
-        gameStarted = false;
-        gameOver = true;
-        gamePaused = false;
-        
-        // 停止游戏循环
-        if (gameLoop) {
-            clearInterval(gameLoop);
-            gameLoop = null;
-        }
-        
-        // 保持恒定游戏速度
-        gameSpeed = CONSTANTS.GAME_SPEED;
-        
-        if (score > highScore) {
-            highScore = score;
-            localStorage.setItem('snakeHighScore', highScore);
-            highScoreElement.textContent = formatScore(highScore, CONSTANTS.SCORE_DIGITS);
-        }
-        
-        finalScoreElement.textContent = score;
-        gameOverModal.style.display = 'flex';
-        pauseResumeBtn.style.display = 'none';
-        
-        // 游戏结束时同步一次最终状态
-        syncGameStateToNative(true);
-        
-        // 发送游戏结束消息给原生层
-        if (window.JSBridge) {
-            window.JSBridge.gameOver(score);
-            console.log('H5游戏结束，分数：', score);
-        } else {
-            console.log('H5游戏结束，分数：', score, '(JSBridge未定义)');
-        }
-    }
 
 // 游戏结束动画函数
 function startGameOverAnimation(boundaryCollision = null) {
@@ -1261,13 +1428,11 @@ function startDisappearAnimation() {
 }
 
 // 显示得分动画
-function showScoreAnimation(x, y, points) {
-    // 确保分数显示为整数
-    scoreAnimation.textContent = points > 0 ? `+${points}` : points;
-    
-    // 调整位置使其更加明显
+function showScoreAnimation(x, y, points, color = '#FFD700') {
+    scoreAnimation.textContent = points > 0 ? `+${points}` : `${points}`;
     scoreAnimation.style.left = `${x}px`;
-    scoreAnimation.style.top = `${y - 20}px`; // 往上偏移一点以便更清晰地看到
+    scoreAnimation.style.top = `${y - 20}px`;
+    scoreAnimation.style.color = color;
     scoreAnimation.style.display = 'block';
     
     // 重置动画
@@ -1291,6 +1456,10 @@ function handleGameOver(boundaryCollision = null) {
     gameOver = true;
     gamePaused = false;
     
+    // 保存本局战绩 + 停止计时器
+    saveGameResult(score, elapsedSeconds);
+    stopElapsedTimer();
+    stopFoodSpawnTimer();
     // 停止游戏循环
     if (gameLoop) {
         clearInterval(gameLoop);
@@ -1341,22 +1510,36 @@ function showGameOverDialog() {
     window.showGameOverDialog();
 }
 
-// 随机生成食物
+// 随机生成食物，追加到食物数组
 function generateFood() {
-    const foodIndex = Math.floor(Math.random() * CONSTANTS.FOOD_IMAGES.length);
-    food = {
-        x: Math.floor(Math.random() * tileCountX),
-        y: Math.floor(Math.random() * tileCountY),
-        imageKey: `FOOD_${foodIndex}`,
-        imageIndex: foodIndex
-    };
+    const isShrink = Math.random() < learningParams.shrinkProb;
+    let newFood;
     
-    // 确保食物不生成在蛇身上
-    for (let segment of snake) {
-        if (segment.x === food.x && segment.y === food.y) {
-            return generateFood();
-        }
+    if (isShrink) {
+        newFood = {
+            x: Math.floor(Math.random() * tileCountX),
+            y: Math.floor(Math.random() * tileCountY),
+            type: 'shrink'
+        };
+    } else {
+        const foodIndex = Math.floor(Math.random() * CONSTANTS.FOOD_IMAGES.length);
+        newFood = {
+            x: Math.floor(Math.random() * tileCountX),
+            y: Math.floor(Math.random() * tileCountY),
+            type: 'normal',
+            imageKey: `FOOD_${foodIndex}`,
+            imageIndex: foodIndex
+        };
     }
+    
+    // 确保不生成在蛇身或已有食物上
+    for (let segment of snake) {
+        if (segment.x === newFood.x && segment.y === newFood.y) return generateFood();
+    }
+    for (let f of foods) {
+        if (f.x === newFood.x && f.y === newFood.y) return generateFood();
+    }
+    foods.push(newFood);
 }
 
 // ================= 游戏逻辑更新 =================
@@ -1412,22 +1595,39 @@ function update() {
     // 处理正常移动逻辑
     snake.unshift(head);
 
-    // 检查是否吃到食物
-    if (head.x === food.x && head.y === food.y) {
-        // 计算分数动画的位置
-        const foodPixelX = food.x * gridSize + canvas.offsetLeft + gridSize/2;
-        const foodPixelY = food.y * gridSize + canvas.offsetTop + gridSize/2;
-        
-        // 更新得分
-        score += CONSTANTS.POINTS_PER_FOOD;
-        scoreElement.textContent = formatScore(score, CONSTANTS.SCORE_DIGITS);
-        showScoreAnimation(foodPixelX, foodPixelY, CONSTANTS.POINTS_PER_FOOD);
-        
+    // 检查是否吃到任意食物
+    let ateFood = false;
+    for (let fi = foods.length - 1; fi >= 0; fi--) {
+        const f = foods[fi];
+        if (head.x === f.x && head.y === f.y) {
+            ateFood = true;
+            if (f.type === 'shrink') {
+                const shrinkCount = Math.min(getShrinkSegments(), snake.length - 1);
+                for (let i = 0; i < shrinkCount; i++) { snake.pop(); }
+                const penalty = getToxicPenalty();
+                score += penalty;
+                scoreElement.textContent = formatScore(Math.max(0, score), CONSTANTS.SCORE_DIGITS);
+                const fpx = f.x * gridSize + canvas.offsetLeft + gridSize/2;
+                const fpy = f.y * gridSize + canvas.offsetTop + gridSize/2;
+                showScoreAnimation(fpx, fpy, penalty, '#FF4444');
+            } else {
+                score += getNormalPoints();
+                scoreElement.textContent = formatScore(score, CONSTANTS.SCORE_DIGITS);
+                const fpx = f.x * gridSize + canvas.offsetLeft + gridSize/2;
+                const fpy = f.y * gridSize + canvas.offsetTop + gridSize/2;
+                showScoreAnimation(fpx, fpy, getNormalPoints());
+            }
+            iterationLevel = getIterationLevel();
+            updateLevelDisplay();
+            foods.splice(fi, 1); // 移除被吃掉的食物
+        }
+    }
+    
+    if (ateFood) {
+        // 补充新食物
         generateFood();
-        
-        // 保持恒定游戏速度，取消根据得分增加速度的逻辑
+        syncGameStateToNative(true, 'critical');
     } else {
-        // 如果没有吃到食物，移除尾部
         snake.pop();
     }
 }
@@ -1713,37 +1913,53 @@ function drawSnake() {
         }
     }
     
-    // 绘制食物（使用图片渲染）
+    // 绘制所有食物
     function drawFood() {
-        // 获取食物图片
-        const foodImage = imageCache[food.imageKey];
+        for (let fi = 0; fi < foods.length; fi++) {
+            const f = foods[fi];
+            const x = f.x * gridSize;
+            const y = f.y * gridSize;
         
-        if (foodImage && foodImage.complete && !foodImage.error) {
-            // 如果图片已加载成功，使用图片渲染
-            const x = food.x * gridSize;
-            const y = food.y * gridSize;
-            
-            // 绘制食物图片，适应网格大小
-            ctx.drawImage(foodImage, x, y, gridSize, gridSize);
+        if (f.type === 'shrink') {
+            // 有毒食物：像素风毒蘑菇小怪（Canvas 绘制）
+            const s = gridSize / 10;
+            const px = (rx, ry, w, h, color) => {
+                ctx.fillStyle = color;
+                ctx.fillRect(x + rx * s, y + ry * s, w * s, h * s);
+            };
+            px(1, 0, 8, 2, '#1B7A2D');
+            px(0, 2, 10, 1, '#1B7A2D');
+            px(0, 3, 3, 1, '#1B7A2D');
+            px(7, 3, 3, 1, '#1B7A2D');
+            px(3, 1, 2, 1, '#2ECC71');
+            px(2, 1, 1, 1, '#A3FF00');
+            px(6, 1, 1, 1, '#A3FF00');
+            px(3, 4, 2, 2, '#00FF41');
+            px(6, 4, 2, 2, '#00FF41');
+            px(4, 4, 1, 1, '#FFFFFF');
+            px(7, 4, 1, 1, '#FFFFFF');
+            px(3, 6, 4, 2, '#A8E6CF');
+            px(4, 8, 1, 1, '#1B5E20');
+            px(5, 8, 1, 1, '#1B5E20');
+            px(5, 9, 1, 1, '#1B5E20');
+            ctx.fillStyle = 'rgba(0, 255, 100, 0.1)';
+            ctx.beginPath();
+            ctx.arc(x + gridSize / 2, y + gridSize / 2, gridSize * 0.55, 0, Math.PI * 2);
+            ctx.fill();
         } else {
-            // 如果图片未加载或加载失败，使用简单的彩色方块作为备用
-            const x = food.x * gridSize;
-            const y = food.y * gridSize;
-            
-            // 随机生成一个明亮的颜色
-            const hue = (food.x * 37 + food.y * 91) % 360;
-            ctx.fillStyle = `hsl(${hue}, 100%, 50%)`;
-            ctx.fillRect(x + 2, y + 2, gridSize - 4, gridSize - 4);
-            
-            // 添加简单的阴影效果
-            ctx.fillStyle = 'rgba(255, 255, 255, 0.5)';
-            ctx.fillRect(x + 4, y + 4, gridSize / 3, gridSize / 3);
+            const foodImage = imageCache[f.imageKey];
+            if (foodImage && foodImage.complete && !foodImage.error) {
+                ctx.drawImage(foodImage, x, y, gridSize, gridSize);
+            } else {
+                const hue = (f.x * 37 + f.y * 91) % 360;
+                ctx.fillStyle = `hsl(${hue}, 100%, 50%)`;
+                ctx.fillRect(x + 2, y + 2, gridSize - 4, gridSize - 4);
+            }
         }
-    }
+        } // end for loop
+    } // end drawFood
 
     // ================= 用户输入处理 =================
-
-    // 添加移动设备上的滑动控制
     let touchStartX = 0;
     let touchStartY = 0;
     

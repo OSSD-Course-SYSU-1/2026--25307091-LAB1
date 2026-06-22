@@ -37,6 +37,7 @@ let gameDataObject: distributedDataObject.DataObject | undefined;
 
 let continueGameDataObject: distributedDataObject.DataObject | undefined;
 let lastProcessedGameData: string = ''; // 添加防重复处理的变量
+let lastProcessedVersion: number = 0;     // 记录已处理的最高版本号，防止状态回滚
 
 class RestoredGameData {
   gameData: string | undefined;
@@ -59,6 +60,7 @@ interface DistributedGameStateData {
   autoStart: boolean;
   boundaryCollision: string | undefined;
   entryBoundary: string | undefined;
+  stateVersion: number;
   receivedAt: number;
 }
 
@@ -164,6 +166,14 @@ export default class EntryAbility extends UIAbility {
               try {
                 const gameData = JSON.parse(gameDataString) as GameData;
                 
+                // 版本号校验：忽略低版本数据，防止分布式状态回滚
+                const incomingVersion = gameData.stateVersion || 0;
+                if (incomingVersion > 0 && incomingVersion <= lastProcessedVersion) {
+                  hilog.info(DOMAIN, TAG, `忽略低版本数据: 收到=${incomingVersion}, 当前=${lastProcessedVersion}`);
+                  return; // 跳过后续处理
+                }
+                lastProcessedVersion = incomingVersion;
+                
                 // 添加接收时间戳，避免重复处理
                 // 手动创建新对象，避免使用Object.assign()
                 const dataWithTimestamp: DistributedGameStateData = {
@@ -180,6 +190,7 @@ export default class EntryAbility extends UIAbility {
                   autoStart: gameData.autoStart,
                   boundaryCollision: gameData.boundaryCollision,
                   entryBoundary: gameData.entryBoundary,
+                  stateVersion: gameData.stateVersion || 0,
                   receivedAt: Date.now()
                 };
                 
@@ -796,6 +807,14 @@ export default class EntryAbility extends UIAbility {
             try {
               const gameData = JSON.parse(gameDataString) as GameData;
               
+              // 版本号校验：忽略低版本数据，防止分布式状态回滚
+              const incomingVersion = gameData.stateVersion || 0;
+              if (incomingVersion > 0 && incomingVersion <= lastProcessedVersion) {
+                hilog.info(DOMAIN, TAG, `忽略低版本数据: 收到=${incomingVersion}, 当前=${lastProcessedVersion}`);
+                return;
+              }
+              lastProcessedVersion = incomingVersion;
+              
               // 添加接收时间戳，避免重复处理
               const dataWithTimestamp: DistributedGameStateData = {
                 snake: gameData.snake,
@@ -811,6 +830,7 @@ export default class EntryAbility extends UIAbility {
                 autoStart: gameData.autoStart,
                 boundaryCollision: gameData.boundaryCollision,
                 entryBoundary: gameData.entryBoundary,
+                stateVersion: gameData.stateVersion || 0,
                 receivedAt: Date.now()
               };
               

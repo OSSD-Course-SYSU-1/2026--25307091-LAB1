@@ -7,11 +7,11 @@
         "material": {
           "certpath": "C:\\Users\\lixiang\\.ohos\\config\\default_snake-game-main_QPcZ099Tp-XC3ufSJKVphIFfyq8yrGE5yJ5ijZpvWl8=.cer",
           "keyAlias": "debugKey",
-          "keyPassword": "YOUR_KEY_PASSWORD",
+          "keyPassword": "0000001B06D109160D521180373B83E3F9F5B6068F053D344848BB28D3C958B3EBCF6DE6F9C544802CA85D",
           "profile": "C:\\Users\\lixiang\\.ohos\\config\\default_snake-game-main_QPcZ099Tp-XC3ufSJKVphIFfyq8yrGE5yJ5ijZpvWl8=.p7b",
           "signAlg": "SHA256withECDSA",
           "storeFile": "C:\\Users\\lixiang\\.ohos\\config\\default_snake-game-main_QPcZ099Tp-XC3ufSJKVphIFfyq8yrGE5yJ5ijZpvWl8=.p12",
-          "storePassword": "YOUR_STORE_PASSWORD"
+          "storePassword": "0000001BCCE9D8B228718BA84DE6844284152B518535BB60F3D98E67E65E3B30BAA30278EBD80BE4559651"
         }
       }
     ],
