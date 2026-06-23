@@ -129,6 +129,24 @@ class NativeClass {
   }
 
   /**
+   * 自由流转请求（H5 → 原生）
+   * H5 调用 JSBridge.requestTransfer(JSON.stringify(gameState))
+   */
+  requestTransfer(gameStateJson: string): void {
+    try {
+      console.info('收到自由流转请求');
+      const eventData: GameOverEvent = {
+        score: 0,
+        gameState: JSON.parse(gameStateJson) as GameState,
+        boundaryCollision: 'transfer'
+      };
+      EventBus.emit(EventTopic.GAME_OVER, eventData);
+    } catch (err) {
+      console.error('自由流转请求解析失败: ' + JSON.stringify(err));
+    }
+  }
+
+  /**
    * 管理员 AI 请求入口（H5 → 原生）
    * H5 调用 JSBridge.callDeepSeek(JSON.stringify(request))
    * 原生层通过 EventBus 异步处理，结果通过 runJavaScript 回传
@@ -515,7 +533,7 @@ export struct WebViewPage {
       .javaScriptProxy({
         object: this.nativeObject,
         name: 'JSBridge',
-        methodList: ['gameOver', 'updateGameState', 'callDeepSeek'],
+        methodList: ['gameOver', 'updateGameState', 'callDeepSeek', 'requestTransfer'],
         controller: this.webController
       })
       .onPageEnd(() => {

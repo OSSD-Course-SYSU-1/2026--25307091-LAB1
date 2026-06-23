@@ -45,7 +45,7 @@ document.addEventListener('DOMContentLoaded', () => {
         CANVAS_ASPECT_RATIO: { WIDTH: 10, HEIGHT: 15 }, // 画布宽高比 10:15
         SWIPE_THRESHOLD: 0,             // 滑动阈值
         // 双食物系统
-        SHRINK_FOOD_PROBABILITY: 0.5,    // 有毒食物出现概率（50%）
+        SHRINK_FOOD_PROBABILITY: 0.2,    // 有毒食物初始概率（20%，随等级递增最大50%）
         // 迭代难度系统（积分+时间+历史战绩三驱动）
         ITERATION_SCORE_STEP: 500,
         ITERATION_TIME_STEP: 45,
@@ -78,7 +78,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 learningParams.scoreStep = saved.scoreStep || learningParams.scoreStep;
                 learningParams.timeStep = saved.timeStep || learningParams.timeStep;
                 learningParams.intervalStep = saved.intervalStep || learningParams.intervalStep;
-                learningParams.shrinkProb = saved.shrinkProb || learningParams.shrinkProb;
+                learningParams.shrinkProb = Math.min(0.5, saved.shrinkProb || learningParams.shrinkProb);
                 learningParams.gameCount = saved.gameCount || 0;
                 learningParams.recentResults = saved.recentResults || [];
             }
@@ -115,17 +115,17 @@ document.addEventListener('DOMContentLoaded', () => {
             learningParams.scoreStep = Math.min(800, learningParams.scoreStep + 80);
             learningParams.timeStep = Math.max(20, learningParams.timeStep - 6);
             learningParams.intervalStep = Math.min(2.5, learningParams.intervalStep + 0.2);
-            learningParams.shrinkProb = Math.min(0.7, learningParams.shrinkProb + 0.03);
+            learningParams.shrinkProb = Math.min(0.5, learningParams.shrinkProb + 0.03);
             console.log('📈 AI: 你太强了，难度提升！');
         } else if (avgScore > 1500) {
             learningParams.scoreStep = Math.min(800, learningParams.scoreStep + 40);
-            learningParams.shrinkProb = Math.min(0.7, learningParams.shrinkProb + 0.02);
+            learningParams.shrinkProb = Math.min(0.5, learningParams.shrinkProb + 0.02);
             console.log('📊 AI: 微调难度中...');
         } else if (avgScore < 600) {
             learningParams.scoreStep = Math.max(200, learningParams.scoreStep - 60);
             learningParams.timeStep = Math.min(55, learningParams.timeStep + 8);
             learningParams.intervalStep = Math.max(0.8, learningParams.intervalStep - 0.2);
-            learningParams.shrinkProb = Math.max(0.3, learningParams.shrinkProb - 0.04);
+            learningParams.shrinkProb = Math.max(0.1, learningParams.shrinkProb - 0.04);
             console.log('📉 AI: 放点水，难度降低~');
         }
         saveLearningParams();
@@ -137,54 +137,40 @@ document.addEventListener('DOMContentLoaded', () => {
      * @returns {{ tileCountX: number, tileCountY: number, gridSize: number }}
      */
     function calculateGridForBreakpoint(availableWidth, availableHeight) {
-        // 从注入的断点数据获取当前断点
         const breakpointData = window.__breakpointData;
         const breakpoint = breakpointData ? breakpointData.breakpoint : 'sm';
         const orientation = breakpointData ? breakpointData.orientation : 'portrait';
         
-        // 根据断点选择网格数量
         let gridX, gridY;
         switch (breakpoint) {
-            case 'lg': // 2in1 / 大平板 ≥ 840vp
-                gridX = 14;
-                gridY = 20;
-                break;
-            case 'md': // 小平板 600-840vp
-                gridX = 12;
-                gridY = 18;
-                break;
-            default: // sm: 手机 < 600vp
-                gridX = CONSTANTS.GRID_COUNT_X;
-                gridY = CONSTANTS.GRID_COUNT_Y;
-                break;
+            case 'lg': gridX = 14; gridY = 20; break;
+            case 'md': gridX = 12; gridY = 18; break;
+            case 'xs': gridX = 8;  gridY = 12; break;
+            default:   gridX = CONSTANTS.GRID_COUNT_X; gridY = CONSTANTS.GRID_COUNT_Y; break;
         }
         
-        // 确保每个 cell 至少 18px（保证触摸可用）
-        const MIN_CELL_SIZE = 18;
-        const maxGridSizeByWidth = Math.floor(availableWidth / gridX);
-        const maxGridSizeByHeight = Math.floor(availableHeight / gridY);
-        let gridSize = Math.min(maxGridSizeByWidth, maxGridSizeByHeight);
+        // 横屏时交换 XY
+        if (orientation === 'landscape') {
+            var tmp = gridX; gridX = gridY; gridY = tmp;
+        }
         
-        // 如果 cell 太小，降级到更小的网格
+        var MIN_CELL_SIZE = 14;
+        var maxGridSizeByWidth = Math.floor(availableWidth / gridX);
+        var maxGridSizeByHeight = Math.floor(availableHeight / gridY);
+        var gridSize = Math.min(maxGridSizeByWidth, maxGridSizeByHeight);
+        
         if (gridSize < MIN_CELL_SIZE) {
-            if (gridX > CONSTANTS.GRID_COUNT_X) {
-                gridX = CONSTANTS.GRID_COUNT_X;
-                gridY = CONSTANTS.GRID_COUNT_Y;
-                gridSize = Math.min(
-                    Math.floor(availableWidth / gridX),
-                    Math.floor(availableHeight / gridY)
-                );
-            }
+            if (gridX > 12) { gridX = 12; gridY = 18; }
+            else if (gridX > 10) { gridX = 10; gridY = 15; }
+            else { gridX = 8; gridY = 12; }
+            gridSize = Math.min(Math.floor(availableWidth / gridX), Math.floor(availableHeight / gridY));
         }
         
-        // 安全兜底：确保 gridSize 至少为 1
         if (gridSize < 1 || isNaN(gridSize)) {
-            gridSize = 20;
-            gridX = CONSTANTS.GRID_COUNT_X;
-            gridY = CONSTANTS.GRID_COUNT_Y;
+            gridSize = 20; gridX = 10; gridY = 15;
         }
         
-        console.log(`断点: ${breakpoint}, 网格: ${gridX}×${gridY}, cell: ${gridSize}px`);
+        console.log('断点: ' + breakpoint + ', 网格: ' + gridX + '×' + gridY + ', cell: ' + gridSize + 'px');
         return { tileCountX: gridX, tileCountY: gridY, gridSize: Math.floor(gridSize) };
     }
     
@@ -405,9 +391,542 @@ document.addEventListener('DOMContentLoaded', () => {
         animationTimer: null,
         boundaryDirection: null
     };
-    
+
+    // ================= NPC 蛆系统 =================
+    let maggots = [];
+    let maggotCorpses = [];
+
+    function spawnMaggot(startX, startY) {
+        var dirs = ['right', 'left', 'up', 'down'];
+        var dir = dirs[Math.floor(Math.random() * 4)];
+        var segs = [{ x: startX, y: startY }];
+        for (var si = 1; si < 3; si++) {
+            var tail = segs[segs.length - 1];
+            if (dir === 'right') segs.push({ x: tail.x - 1, y: tail.y });
+            else if (dir === 'left') segs.push({ x: tail.x + 1, y: tail.y });
+            else if (dir === 'down') segs.push({ x: tail.x, y: tail.y - 1 });
+            else segs.push({ x: tail.x, y: tail.y + 1 });
+        }
+        return { segments: segs, direction: dir, alive: true };
+    }
+
+    function updateMaggots() {
+        for (var mi = maggots.length - 1; mi >= 0; mi--) {
+            var m = maggots[mi];
+            if (!m.alive) continue;
+            if (Math.random() < 0.15) {
+                var dirs = ['right', 'left', 'up', 'down'];
+                var opposite = { right: 'left', left: 'right', up: 'down', down: 'up' };
+                var valid = dirs.filter(function(d) { return d !== opposite[m.direction]; });
+                m.direction = valid[Math.floor(Math.random() * valid.length)];
+            }
+            var mhead = { x: m.segments[0].x, y: m.segments[0].y };
+            switch (m.direction) {
+                case 'right': mhead.x++; break;
+                case 'left': mhead.x--; break;
+                case 'down': mhead.y++; break;
+                case 'up': mhead.y--; break;
+            }
+            if (mhead.x < 0 || mhead.x >= tileCountX || mhead.y < 0 || mhead.y >= tileCountY) {
+                m.direction = opposite[m.direction];
+                mhead = { x: m.segments[0].x, y: m.segments[0].y };
+                switch (m.direction) { case 'right': mhead.x++; break; case 'left': mhead.x--; break; case 'down': mhead.y++; break; case 'up': mhead.y--; break; }
+            }
+            var hitSnake = false;
+            for (var si2 = 0; si2 < snake.length; si2++) {
+                if (snake[si2].x === mhead.x && snake[si2].y === mhead.y) { hitSnake = true; break; }
+            }
+            if (hitSnake) {
+                for (var ci = 0; ci < m.segments.length; ci++) maggotCorpses.push({ x: m.segments[ci].x, y: m.segments[ci].y });
+                maggots.splice(mi, 1);
+                continue;
+            }
+            m.segments.unshift(mhead);
+            var ate = false;
+            for (var fi = foods.length - 1; fi >= 0; fi--) {
+                if (foods[fi].x === mhead.x && foods[fi].y === mhead.y && foods[fi].type === 'normal') {
+                    foods.splice(fi, 1); ate = true; break;
+                }
+            }
+            if (!ate) m.segments.pop();
+            if (m.segments.length > 15) {
+                for (var ci2 = 0; ci2 < m.segments.length; ci2++) maggotCorpses.push({ x: m.segments[ci2].x, y: m.segments[ci2].y });
+                maggots.splice(mi, 1);
+            }
+        }
+        while (maggotCorpses.length > 200) maggotCorpses.shift();
+    }
+
+    function drawMaggots() {
+        for (var ci = 0; ci < maggotCorpses.length; ci++) {
+            var c = maggotCorpses[ci];
+            ctx.fillStyle = '#AA9977';
+            ctx.beginPath();
+            ctx.arc(c.x * gridSize + gridSize / 2, c.y * gridSize + gridSize / 2, gridSize * 0.22, 0, Math.PI * 2);
+            ctx.fill();
+        }
+        for (var mi = 0; mi < maggots.length; mi++) {
+            var m = maggots[mi];
+            if (!m.alive) continue;
+            for (var si = 0; si < m.segments.length; si++) {
+                var sx = m.segments[si].x * gridSize;
+                var sy = m.segments[si].y * gridSize;
+                if (si === 0) {
+                    ctx.fillStyle = '#F0F0E0';
+                    ctx.fillRect(sx + 2, sy + 2, gridSize - 4, gridSize - 4);
+                    ctx.fillStyle = '#333';
+                    ctx.fillRect(sx + gridSize * 0.3, sy + gridSize * 0.25, 3, 3);
+                    ctx.fillRect(sx + gridSize * 0.6, sy + gridSize * 0.25, 3, 3);
+                } else {
+                    var shade = Math.max(180, 240 - si * 5);
+                    ctx.fillStyle = 'rgb(' + shade + ',' + shade + ',' + (shade - 20) + ')';
+                    ctx.fillRect(sx + 3, sy + 3, gridSize - 6, gridSize - 6);
+                }
+            }
+        }
+    }
+
+    function activateGreed() {
+        var converted = 0;
+        for (var fi = 0; fi < foods.length; fi++) {
+            if (foods[fi].type === 'shrink') {
+                foods[fi].type = 'normal';
+                var idx = Math.floor(Math.random() * CONSTANTS.FOOD_IMAGES.length);
+                foods[fi].imageKey = 'FOOD_' + idx;
+                foods[fi].imageIndex = idx;
+                converted++;
+            }
+        }
+        var spawned = 0;
+        for (var attempt = 0; attempt < 30 && spawned < 3; attempt++) {
+            var mx = Math.floor(Math.random() * tileCountX);
+            var my = Math.floor(Math.random() * tileCountY);
+            var conflict = false;
+            for (var si = 0; si < snake.length; si++) {
+                if (snake[si].x === mx && snake[si].y === my) { conflict = true; break; }
+            }
+            if (!conflict) { maggots.push(spawnMaggot(mx, my)); spawned++; }
+        }
+        draw();
+        return { ok: true, msg: '🐛 贪婪！毒食已净化×' + converted + '，蛆×' + spawned };
+    }
+
+    // ================= 本地管理员决策引擎 =================
+    // 纯本地算法，跨对局自成长，实时微调游戏参数
+    var LocalAdminEngine = {
+        // === 持久化数据 ===
+        _profile: {
+            totalGames: 0,          // 总对局数
+            skillLevel: 3,          // 玩家技能等级 1~10
+            avgScore: 0,            // 历史平均分
+            avgSurvival: 0,         // 历史平均存活秒数
+            recentScores: [],       // 最近10局分数
+            preferredCommands: {},  // 玩家偏好命令
+            deathCauses: { self: 0, wall: 0, poison: 0 },
+            lastAdjustTime: 0       // 上次微调时间戳
+        },
+        _monitorTimer: null,        // 实时监控定时器
+        _scoreSnapshot: 0,          // 上次快照分数
+        _snapshotTime: 0,           // 上次快照时间
+
+        // === 持久化加载 ===
+        _load: function() {
+            try {
+                var saved = JSON.parse(localStorage.getItem('snakeAdminProfile') || 'null');
+                if (saved) {
+                    this._profile.totalGames = saved.totalGames || 0;
+                    this._profile.skillLevel = saved.skillLevel || 3;
+                    this._profile.avgScore = saved.avgScore || 0;
+                    this._profile.avgSurvival = saved.avgSurvival || 0;
+                    this._profile.recentScores = saved.recentScores || [];
+                    this._profile.preferredCommands = saved.preferredCommands || {};
+                    this._profile.deathCauses = saved.deathCauses || { self: 0, wall: 0, poison: 0 };
+                }
+            } catch(e) {}
+        },
+
+        _save: function() {
+            try {
+                localStorage.setItem('snakeAdminProfile', JSON.stringify(this._profile));
+            } catch(e) {}
+        },
+
+        // === 每局结束后学习 ===
+        analyzeSession: function(finalScore, duration, deathCause) {
+            var p = this._profile;
+            p.totalGames++;
+            p.recentScores.push(finalScore);
+            if (p.recentScores.length > 10) p.recentScores.shift();
+
+            // 更新平均分
+            var sum = 0;
+            for (var i = 0; i < p.recentScores.length; i++) sum += p.recentScores[i];
+            p.avgScore = Math.round(sum / p.recentScores.length);
+            p.avgSurvival = Math.round((p.avgSurvival * (p.totalGames - 1) + duration) / p.totalGames);
+
+            // 死亡原因统计
+            if (deathCause === 'self') p.deathCauses.self++;
+            else if (deathCause === 'wall') p.deathCauses.wall++;
+            else if (deathCause === 'poison') p.deathCauses.poison++;
+
+            // 技能等级计算
+            var scoreComponent = Math.min(10, Math.floor(p.avgScore / 300));
+            var survivalComponent = Math.min(10, Math.floor(p.avgSurvival / 30));
+            var consistencyBonus = p.totalGames > 10 ? 1 : 0;
+            p.skillLevel = Math.max(1, Math.min(10, Math.round((scoreComponent + survivalComponent) / 2) + consistencyBonus));
+
+            this._save();
+            console.log('🧠 管理员成长: 技能Lv.' + p.skillLevel + ' | 均分:' + p.avgScore + ' | 总局数:' + p.totalGames);
+        },
+
+        // === 实时监控（每5秒微调 + 每30~60秒自动弹出） ===
+        startMonitor: function() {
+            var self = this;
+            this._scoreSnapshot = score;
+            this._snapshotTime = Date.now();
+            this._lastInteraction = Date.now();
+            this._popupCount = 0;
+            this._lastLevel = 0;
+            this._autoTriggerCountdown = this._getNextInterval();
+            this.stopMonitor();
+            this._monitorTimer = setInterval(function() {
+                if (!gameStarted || gameOver || gamePaused) return;
+                self._tick();
+            }, 5000);
+        },
+
+        stopMonitor: function() {
+            if (this._monitorTimer) { clearInterval(this._monitorTimer); this._monitorTimer = null; }
+        },
+
+        // 每5秒执行一次微调
+        _tick: function() {
+            var now = Date.now();
+            var elapsed = (now - this._snapshotTime) / 1000;
+            if (elapsed < 4) return; // 至少间隔4秒
+
+            var scoreDelta = score - this._scoreSnapshot;
+            var scorePerSec = scoreDelta / elapsed;
+            this._scoreSnapshot = score;
+            this._snapshotTime = now;
+
+            var p = this._profile;
+            var adjusted = false;
+
+            // 策略1: 得分速率低 → 悄悄降低难度
+            if (scorePerSec < 5 && gameSpeed > 200 && snake.length < 8) {
+                var newSpeed = Math.max(150, gameSpeed - 15);
+                if (newSpeed !== gameSpeed) {
+                    gameSpeed = newSpeed;
+                    if (gameLoop) { clearInterval(gameLoop); gameLoop = setInterval(function() { update(); draw(); }, gameSpeed); }
+                    adjusted = true;
+                }
+            }
+            // 策略2: 得分速率高 + 高手 → 悄悄提速
+            else if (scorePerSec > 30 && p.skillLevel >= 5) {
+                var newSpeed2 = Math.min(350, gameSpeed + 10);
+                if (newSpeed2 !== gameSpeed) {
+                    gameSpeed = newSpeed2;
+                    if (gameLoop) { clearInterval(gameLoop); gameLoop = setInterval(function() { update(); draw(); }, gameSpeed); }
+                    adjusted = true;
+                }
+            }
+
+            // 策略3: 高等级玩家 → 微调毒食物概率
+            if (p.skillLevel >= 7 && learningParams.shrinkProb < 0.5) {
+                learningParams.shrinkProb = Math.min(0.5, learningParams.shrinkProb + 0.02);
+                adjusted = true;
+            } else if (p.skillLevel <= 2 && learningParams.shrinkProb > 0.2) {
+                learningParams.shrinkProb = Math.max(0.1, learningParams.shrinkProb - 0.02);
+                adjusted = true;
+            }
+
+            // 策略4: 经常撞墙死亡 → 提前给更多食物帮助
+            if (p.deathCauses.wall > p.deathCauses.self * 2 && foods.length < 2 && Math.random() < 0.4) {
+                generateFood();
+                draw();
+                adjusted = true;
+            }
+
+            if (adjusted) {
+                console.log('🔧 管理员微调: 速度=' + gameSpeed + 'ms 毒率=' + Math.round(learningParams.shrinkProb * 100) + '%');
+            }
+
+            // === 🎁 主动奖励系统 ===
+            var rewarded = false;
+
+            // 奖励1: 食物稀缺时刷新食物
+            if (foods.length <= 1 && snake.length >= 4 && Math.random() < 0.5) {
+                var addedCount = 0;
+                var targetFoods = p.skillLevel >= 5 ? 2 : 1;
+                while (foods.length < targetFoods + 1) {
+                    generateFood();
+                    addedCount++;
+                    if (addedCount >= 3) break;
+                }
+                if (addedCount > 0) {
+                    showScoreAnimation(canvas.width / 2.5, canvas.height / 4, '🎁 +食物', '#66EE88');
+                }
+                draw();
+                rewarded = true;
+            }
+
+            // 奖励2: 蛇过长 + 低技能 → 悄悄缩短
+            if (snake.length >= 18 && p.skillLevel <= 4 && Math.random() < 0.35) {
+                var shrinkCount = Math.min(3, snake.length - 4);
+                for (var si = 0; si < shrinkCount; si++) snake.pop();
+                showScoreAnimation(canvas.width / 2.5, canvas.height / 4, '🎁 蛇身-3', '#FFAA44');
+                draw();
+                rewarded = true;
+            }
+
+            // 奖励3: 新手连死 → 送额外食物 + 降速
+            if (p.totalGames >= 3 && p.avgScore < 200 && p.skillLevel <= 2 && Math.random() < 0.3) {
+                generateFood();
+                generateFood();
+                var reliefSpeed = Math.min(500, gameSpeed + 30);
+                if (reliefSpeed !== gameSpeed) {
+                    gameSpeed = reliefSpeed;
+                    if (gameLoop) { clearInterval(gameLoop); gameLoop = setInterval(function() { update(); draw(); }, gameSpeed); }
+                }
+                showScoreAnimation(canvas.width / 2.5, canvas.height / 4, '🎁 新手援助', '#FFCC00');
+                draw();
+                rewarded = true;
+            }
+
+            // 奖励4: 长期存活玩家 → 偶尔送无敌
+            if (elapsedSeconds > 180 && p.skillLevel >= 3 && Math.random() < 0.15) {
+                if (!AdminSession.isInvincible()) {
+                    if (AdminSession.session) AdminSession.session.invincible = true;
+                    showScoreAnimation(canvas.width / 2.5, canvas.height / 4, '🛡️ 短暂无敌!', '#AA88FF');
+                    // 15秒后自动关闭
+                    setTimeout(function() {
+                        if (AdminSession.session) AdminSession.session.invincible = false;
+                    }, 15000);
+                }
+                rewarded = true;
+            }
+
+            if (rewarded) {
+                console.log('🎁 管理员发放奖励');
+            }
+
+            // === 升级检测（每次升级强制弹出） ===
+            var currentLevel = getIterationLevel();
+            var leveledUp = (currentLevel > this._lastLevel);
+            this._lastLevel = currentLevel;
+
+            // === 自动弹出检查（每5秒倒计时-5） ===
+            this._autoTriggerCountdown -= 5;
+            if ((this._autoTriggerCountdown <= 0 || leveledUp) && !gamePaused) {
+                var shouldPopup = leveledUp;
+                if (!shouldPopup) {
+                    if (scorePerSec < 3 && snake.length > 4) shouldPopup = true;
+                    if (scorePerSec > 25 && p.skillLevel >= 4) shouldPopup = true;
+                    if (score > 0 && score % 500 < scorePerSec * 5) shouldPopup = true;
+                    if (snake.length >= 15) shouldPopup = true;
+                }
+
+                if (shouldPopup) {
+                    this._popupCount++;
+                    var qa = this.generate(score, getIterationLevel(), snake.length, elapsedSeconds,
+                        gameSpeed, foods.length, AdminSession.session?.grantedCommands || new Set(), 'auto', this._popupCount);
+                    showAdminQuestion(qa);
+                    _adminPausedGame = true;
+                    gamePaused = true;
+                    pauseResumeBtn.textContent = '继续';
+                    if (gameLoop) { clearInterval(gameLoop); gameLoop = null; }
+                }
+                // 重置倒计时（随等级缩短，最短10s）
+                this._autoTriggerCountdown = this._getNextInterval();
+                this._lastInteraction = Date.now();
+            }
+        },
+
+        // 计算下次弹出间隔（等级越高越短，10~60秒）
+        _getNextInterval: function() {
+            var lv = getIterationLevel();
+            var base = Math.max(10, 50 - lv * 6);
+            return base + Math.floor(Math.random() * Math.max(5, 25 - lv * 3));
+        },
+
+        // === 记录玩家偏好 ===
+        learn: function(chosenAction, gameStateAtChoice) {
+            var p = this._profile;
+            if (!p.preferredCommands[chosenAction]) p.preferredCommands[chosenAction] = 0;
+            p.preferredCommands[chosenAction]++;
+            this._save();
+        },
+
+        // === 生成问答（支持自动弹出/手动触发，同局递增强度） ===
+        generate: function(score, level, snakeLen, elapsed, gameSpeed, foodsCount, grantedCommands, triggerType, popupCount) {
+            var cmds = Array.from(grantedCommands || []);
+            var p = this._profile;
+            var question = '';
+            var options = [];
+            var candidates = [];
+            var isManual = (triggerType === 'manual');
+            var tier = Math.min(popupCount || 1, 5); // 弹出次数 → 等级 1~5
+
+            var isEarly = score < 300;
+            var isMid = score >= 300 && score < 1500;
+            var isLate = score >= 1500;
+            var isLongSnake = snakeLen >= 12;
+            var isStruggling = score < 100 && elapsed > 60;
+            var isPro = score > 2000;
+
+            // === 手动触发时：个性化问候 + 智能问题 ===
+            if (isManual) {
+                var timeSinceLast = Date.now() - (this._lastInteraction || 0);
+                if (timeSinceLast < 30000) {
+                    question = '这么快又来了！';
+                } else if (p.skillLevel >= 7) {
+                    question = '欢迎回来，高手！今天手感如何？';
+                } else if (p.totalGames <= 3) {
+                    question = '你好！我是你的游戏管理员，需要帮忙吗？';
+                } else if (p.skillLevel <= 3) {
+                    question = '加油！我在陪你一起进步~';
+                } else {
+                    question = '嘿！又见面了，要调整什么？';
+                }
+            } else {
+                // 自动弹出问题
+                if (isStruggling) {
+                    question = p.skillLevel <= 2 ? '别灰心，需要帮忙吗？' : '有点不顺？调整一下？';
+                } else if (isEarly && p.skillLevel >= 6) {
+                    question = '老玩家了，要加速开局吗？';
+                } else if (isEarly) {
+                    question = '刚开局，要做些调整吗？';
+                } else if (isPro) {
+                    question = '太强了！要终极挑战吗？';
+                } else if (isMid && p.skillLevel >= 5) {
+                    question = '状态不错，加点难度？';
+                } else {
+                    question = '需要调整一下吗？';
+                }
+            }
+            this._lastInteraction = Date.now();
+
+            // === 选项池（同局递增强度：tier 1~5） ===
+            var t = tier; // 简写
+
+            // 种类1: 食物（随等级递增数量）
+            if (cmds.indexOf('spawn_food') >= 0) {
+                var foodCount = Math.min(t + 1, 5);
+                var foodSuffix = t >= 4 ? '传奇' : (t >= 3 ? '豪华' : (t >= 2 ? '加强' : ''));
+                if (isStruggling) {
+                    candidates.push({ label: '🎪 ' + (t >= 3 ? '饕餮' : '食物') + '盛宴' + (t >= 4 ? ' MAX' : ''), action: 'spawn_food', params: { type: 'normal', count: String(foodCount + 1) }, desc: '一口气刷新' + (foodCount + 1) + '个食物，吃饱继续冲', priority: 95 });
+                } else if (foodsCount <= 1) {
+                    candidates.push({ label: '🍞 空投补给 ' + (t >= 2 ? foodSuffix : ''), action: 'spawn_food', params: { type: 'normal', count: String(foodCount) }, desc: '屏幕食物太少？立刻投送' + foodCount + '个', priority: 80 });
+                } else if (isEarly) {
+                    candidates.push({ label: '🌱 开局福利 ' + (t >= 2 ? foodSuffix : ''), action: 'spawn_food', params: { type: 'normal', count: String(foodCount) }, desc: '起跑线上多' + foodCount + '份食物', priority: 72 });
+                } else {
+                    candidates.push({ label: '🍎 ' + (t >= 2 ? '超级' : '') + '精准投喂 ' + (t >= 3 ? foodSuffix : ''), action: 'spawn_food', params: { type: 'normal', count: String(foodCount) }, desc: '刷新' + foodCount + '个食物', priority: 45 });
+                }
+            }
+
+            // 种类2: 蛇身管理（随等级递增节数）
+            var shrinkAmt = Math.min(2 + t, 8);
+            var growAmt = Math.min(2 + Math.floor(t / 2), 6);
+            if (isLongSnake && cmds.indexOf('shrink_snake') >= 0) {
+                var shearNames = ['🐑 松动羊毛剪', '🐑 精钢羊毛剪', '✂️ 等离子剪', '⚔️ 虚空斩', '💀 维度切割'];
+                candidates.push({ label: shearNames[Math.min(t - 1, 4)], action: 'shrink_snake', params: { segments: String(shrinkAmt) }, desc: '剪短' + shrinkAmt + '节蛇身，轻装上阵，不扣分', priority: 72 });
+            }
+            if (!isStruggling && !isLongSnake && cmds.indexOf('grow_snake') >= 0) {
+                var growNames = ['📏 激素催长', '📏 超级催长素', '🧬 基因强化', '🧬 超进化', '🧬 觉醒之力'];
+                candidates.push({ label: growNames[Math.min(t - 1, 4)], action: 'grow_snake', params: { segments: String(growAmt) }, desc: '蛇身立刻变长' + growAmt + '节', priority: 50 });
+            }
+
+            // 种类3: 速度调控（随等级加大幅度）
+            var speedBoost = Math.min(40 + t * 15, 100);
+            var speedRelief = Math.min(80 + t * 20, 200);
+            if (cmds.indexOf('set_speed') >= 0) {
+                if (isStruggling) {
+                    candidates.push({ label: '🐢 慢镜头模式 ' + (t >= 3 ? 'Pro' : ''), action: 'set_speed', params: { speed: String(Math.min(550, gameSpeed + speedRelief)) }, desc: '大幅降低速度+' + speedRelief + 'ms，给你喘息空间', priority: 85 });
+                } else if (isPro && p.skillLevel >= 6) {
+                    var hellNames = ['⚡ 地狱疾风', '⚡ 深渊疾风', '🔥 炼狱模式', '🔥 末日审判', '💀 神速领域'];
+                    candidates.push({ label: hellNames[Math.min(t - 1, 4)], action: 'set_speed', params: { speed: String(Math.max(70, 100 - t * 5)) }, desc: '速度' + (100 - t * 5) + 'ms！真正的高手试炼', priority: 95 });
+                } else if (!isStruggling && gameSpeed > 150) {
+                    candidates.push({ label: '💨 疾风步 ' + (t >= 2 ? 'Lv.' + t : ''), action: 'set_speed', params: { speed: String(Math.max(90, gameSpeed - speedBoost)) }, desc: '加速' + speedBoost + 'ms，考验反应力', priority: 60 });
+                } else if (gameSpeed > 250) {
+                    candidates.push({ label: '⏪ 慢放卷轴 ' + (t >= 2 ? '+' + t : ''), action: 'set_speed', params: { speed: String(gameSpeed - 50 - t * 10) }, desc: '时间慢下来，从容操作', priority: 55 });
+                }
+            }
+
+            // 种类4: 保护类
+            if (!isStruggling && cmds.indexOf('toggle_invincible') >= 0) {
+                var shieldNames = ['🛡️ 金钟罩', '🛡️ 金刚不坏', '🔮 圣盾术', '🔮 绝对防御', '👑 不朽之盾'];
+                candidates.push({ label: shieldNames[Math.min(t - 1, 4)], action: 'toggle_invincible', params: {}, desc: '短暂无敌，撞墙穿墙，' + (10 + t * 3) + '秒后消失', priority: 38 });
+            }
+
+            // 种类5: 查询
+            if (cmds.indexOf('get_stats') >= 0) {
+                candidates.push({ label: '📋 战场情报' + (t >= 3 ? ' 深度扫描' : ''), action: 'get_stats', params: {}, desc: '查看速度、等级、毒率等详细数据', priority: 50 });
+            }
+
+            // 种类6: 广播
+            if (cmds.indexOf('broadcast') >= 0 && Math.random() < 0.3) {
+                var quotes = ['加油！你是最胖的蛇！', '稳住，我们能赢！', '前方高能预警~', '蛇蛇勇敢冲！', '管理员已上线！'];
+                candidates.push({ label: '📢 管理员喊话', action: 'broadcast', params: { message: quotes[Math.floor(Math.random() * quotes.length)] }, desc: '在屏幕上显示一条消息', priority: 30 });
+            }
+
+            // 种类7: 贪婪（场上毒食物≥2时出现）
+            var toxicCount = 0;
+            for (var fi = 0; fi < foods.length; fi++) { if (foods[fi].type === 'shrink') toxicCount++; }
+            if (toxicCount >= 2) {
+                var greedNames = ['🐛 贪婪', '🐛 贪欲之壶', '🐛 暴食之门'];
+                candidates.push({ label: greedNames[Math.min(t - 1, 2)], action: 'greed', params: {}, desc: '毒食全转普通，但召唤3条蛆！蛆会抢吃食物', priority: 20 + t * 14 });
+            }
+
+            // 辅助
+            function isFastSpeed() { return gameSpeed <= 150; }
+
+            // 分离特殊选项和常规选项
+            var specials = [];
+            var regulars = [];
+            for (var ci = 0; ci < candidates.length; ci++) {
+                if (candidates[ci].action === 'greed') specials.push(candidates[ci]);
+                else regulars.push(candidates[ci]);
+            }
+            // 排序
+            var self = this;
+            regulars.sort(function(a, b) {
+                var prefA = p.preferredCommands[a.action] || 0;
+                var prefB = p.preferredCommands[b.action] || 0;
+                var wa = (a.priority || 50) + prefA * 3;
+                var wb = (b.priority || 50) + prefB * 3;
+                return wb - wa;
+            });
+            specials.sort(function(a, b) { return (b.priority || 50) - (a.priority || 50); });
+
+            // 选取：1个特殊 + 2个常规 + skip
+            for (var i = 0; i < Math.min(specials.length, 1); i++) {
+                var c = specials[i];
+                options.push({ label: c.label, action: c.action, params: c.params, description: c.desc });
+            }
+            for (var i = 0; i < Math.min(regulars.length, 3 - options.length); i++) {
+                var c2 = regulars[i];
+                options.push({ label: c2.label, action: c2.action, params: c2.params, description: c2.desc });
+            }
+            // 补充到3个
+            while (options.length < 3 && regulars.length > options.length - (specials.length > 0 ? 1 : 0)) {
+                var extra = regulars[options.length - (specials.length > 0 ? 1 : 0)];
+                if (extra && !options.some(function(o) { return o.action === extra.action; })) {
+                    options.push({ label: extra.label, action: extra.action, params: extra.params, description: extra.desc });
+                } else break;
+            }
+
+            // 始终加跳过选项
+            options.push({ label: '👋 不用了', action: 'skip', params: {}, description: '继续游戏' });
+
+            return { question: question, options: options };
+        }
+    };
+
+    // 初始化时加载管理员画像
+    LocalAdminEngine._load();
+
     // ================= 管理员 AI 会话系统 =================
-    // 会话级临时管理员：快照 → 修改 → 对局结束全量复原
     const AdminSession = {
         session: null,
         // 本次对局默认授权命令（可在游戏开始前修改）
@@ -671,6 +1190,11 @@ document.addEventListener('DOMContentLoaded', () => {
                 msg, '#66AAEE'
             );
             return { ok: true, msg: '📢 消息已广播' };
+        },
+
+        /** 贪婪：毒食转普通 + 召唤蛆 */
+        greed(params) {
+            return activateGreed();
         }
     };
 
@@ -691,6 +1215,13 @@ document.addEventListener('DOMContentLoaded', () => {
             if (gameLoop) { clearInterval(gameLoop); gameLoop = null; }
         }
 
+        // 保存当前状态供学习使用
+        window.__lastAdminState__ = {
+            score: score,
+            snakeLength: snake.length,
+            elapsedSeconds: elapsedSeconds
+        };
+
         // 显示加载状态
         const modal = document.getElementById('adminModal');
         const loadingEl = document.getElementById('adminLoading');
@@ -702,43 +1233,54 @@ document.addEventListener('DOMContentLoaded', () => {
         // 更新授权显示
         const grantsEl = document.getElementById('adminGrants');
         if (grantsEl && AdminSession.session) {
-            grantsEl.textContent = `🔑 ${[...AdminSession.session.grantedCommands].slice(0, 3).join(', ')}`;
+            grantsEl.textContent = '🔑 ' + [...AdminSession.session.grantedCommands].slice(0, 3).join(', ');
         }
 
-        // 构建请求发送给原生层
-        const request = {
-            userMessage: '请根据当前游戏状态给出建议',
-            gameContext: {
-                score: score,
-                level: getIterationLevel(),
-                snakeLength: snake.length,
-                elapsedSeconds: elapsedSeconds,
-                learningParams: learningParams,
-                foodsCount: foods.length,
-                gameSpeed: gameSpeed
-            },
-            grantedCommands: [...AdminSession.session.grantedCommands],
-            sessionId: AdminSession.session.id
-        };
+        // ★ 本地引擎即时生成问答（手动触发带问候，同局递增强度）
+        LocalAdminEngine._popupCount++;
+        var localResult = LocalAdminEngine.generate(
+            score, getIterationLevel(), snake.length, elapsedSeconds,
+            gameSpeed, foods.length, AdminSession.session.grantedCommands, 'manual', LocalAdminEngine._popupCount
+        );
+        showAdminQuestion(localResult);
 
+        // 可选：后台请求 DeepSeek 增强（不阻塞）
+        // DeepSeek 已禁用，全部使用本地算法
+        /*
         if (window.JSBridge && typeof window.JSBridge.callDeepSeek === 'function') {
-            window.JSBridge.callDeepSeek(JSON.stringify(request));
-            console.log('📡 已发送管理员AI请求');
-        } else {
-            // 无 JSBridge 时使用降级问答
-            console.warn('JSBridge 不可用，使用降级问答');
-            const fallback = buildFallbackQuestion();
-            showAdminQuestion(fallback);
+            var request = {
+                userMessage: '请根据当前游戏状态给出建议',
+                gameContext: {
+                    score: score,
+                    level: getIterationLevel(),
+                    snakeLength: snake.length,
+                    elapsedSeconds: elapsedSeconds,
+                    learningParams: learningParams,
+                    foodsCount: foods.length,
+                    gameSpeed: gameSpeed
+                },
+                grantedCommands: [...AdminSession.session.grantedCommands],
+                sessionId: AdminSession.session.id
+            };
+            // 延迟发送，不阻塞本地体验
+            setTimeout(function() {
+                window.JSBridge.callDeepSeek(JSON.stringify(request));
+            }, 100);
         }
+        */
     }
 
-    /** 原生层回调：AI 返回结果 */
-    window.__admin__ = {
+    /*
+        window.__admin__ = {
         onAIResponse: function(aiResult) {
-            console.log('📩 收到AI回复:', aiResult);
-            showAdminQuestion(aiResult);
+            var modal = document.getElementById('adminModal');
+            if (modal && modal.style.display === 'flex') {
+                console.log('📩 DeepSeek增强回复已就绪，更新选项');
+                showAdminQuestion(aiResult);
+            }
         }
-    };
+        };
+        */
 
     /** 构建降级问答（AI 不可用时） */
     function buildFallbackQuestion() {
@@ -769,18 +1311,27 @@ document.addEventListener('DOMContentLoaded', () => {
 
         if (loadingEl) loadingEl.style.display = 'none';
         if (questionBox) questionBox.style.display = 'block';
-        if (questionEl) questionEl.textContent = aiResult.question || '需要调整吗？';
+        if (questionEl) {
+            questionEl.textContent = aiResult.question || '需要调整吗？';
+            var colors = ['#FF4444', '#FF8800', '#FFCC00', '#FF6644', '#EE5500'];
+            questionEl.style.color = colors[Math.floor(Math.random() * colors.length)];
+        }
         if (optionsEl) {
             optionsEl.innerHTML = '';
-            (aiResult.options || []).forEach(opt => {
-                const btn = document.createElement('button');
-                btn.className = 'admin-option-btn' + (opt.action === 'skip' ? ' skip-btn' : '');
-                btn.innerHTML = `<span class="option-label">${opt.label || opt.action}</span>`;
-                if (opt.description) {
-                    btn.innerHTML += `<span class="option-desc">${opt.description}</span>`;
-                }
-                btn.addEventListener('click', () => onPlayerSelectOption(opt));
-                optionsEl.appendChild(btn);
+            (aiResult.options || []).forEach(function(opt) {
+                var card = document.createElement('div');
+                card.className = 'admin-option-card' + (opt.action === 'skip' ? ' skip-card' : '');
+                var parts = (opt.label || '').split(' ');
+                var icon = parts[0] || '';
+                var name = parts.slice(1).join(' ') || opt.label;
+                if (opt.action === 'skip') { icon = '👋'; name = '继续游戏'; }
+                card.innerHTML = '<div class="card-icon">' + icon + '</div>' +
+                    '<div class="card-body">' +
+                    '<div class="card-name">' + name + '</div>' +
+                    '<div class="card-desc">' + (opt.description || '') + '</div>' +
+                    '</div>';
+                card.addEventListener('click', function() { onPlayerSelectOption(opt); });
+                optionsEl.appendChild(card);
             });
         }
 
@@ -790,7 +1341,13 @@ document.addEventListener('DOMContentLoaded', () => {
 
     /** 玩家选择了某个选项 */
     function onPlayerSelectOption(option) {
-        console.log(`👆 玩家选择: ${option.label} → ${option.action}`);
+        console.log('👆 玩家选择: ' + option.label + ' → ' + option.action);
+
+        // ★ 自学习：记录玩家选择（skip 不记）
+        var state = window.__lastAdminState__ || { score: score, snakeLength: snake.length, elapsedSeconds: elapsedSeconds };
+        if (option.action !== 'skip') {
+            LocalAdminEngine.learn(option.action, state);
+        }
 
         // 隐藏弹窗
         AdminSession._hideModal();
@@ -836,11 +1393,13 @@ document.addEventListener('DOMContentLoaded', () => {
         _adminPausedGame = false;
     }
 
-    // 在游戏开始后激活管理员会话
+    // 在游戏开始后激活管理员会话并显示按钮
     function activateAdminOnGameStart() {
         if (!AdminSession.session?.isActive) {
             AdminSession.start();
         }
+        var tb = document.getElementById('transferBtn');
+        if (tb) tb.style.display = 'flex';
     }
 
     // ================= JSBridge 相关功能 =================
@@ -1460,100 +2019,66 @@ document.addEventListener('DOMContentLoaded', () => {
     
     // ================= 屏幕适配功能 =================
 
-    // 初始化画布大小，优化像素风格渲染
     function initCanvas() {
-        console.log('开始初始化画布');
-        const container = canvas.parentElement;
-        const windowWidth = window.innerWidth;
-        const windowHeight = window.innerHeight;
-        const isLandscape = windowWidth > windowHeight;
-        const dpr = window.devicePixelRatio || 1;
+        var container = canvas.parentElement;
+        var windowWidth = window.innerWidth;
+        var windowHeight = window.innerHeight;
+        var isLandscape = windowWidth > windowHeight;
+        var dpr = window.devicePixelRatio || 1;
         
-        console.log(`窗口尺寸: 宽=${windowWidth}, 高=${windowHeight}, 方向=${isLandscape ? '横屏' : '竖屏'}`);
-        
-        // 计算可用空间
-        let availableWidth, availableHeight;
+        var availableWidth, availableHeight;
         
         if (isLandscape) {
-            availableHeight = windowHeight * 0.85;
+            availableHeight = windowHeight * 0.88;
             availableWidth = availableHeight * (CONSTANTS.GRID_COUNT_X / CONSTANTS.GRID_COUNT_Y);
-            if (availableWidth > windowWidth * 0.9) {
-                availableWidth = windowWidth * 0.9;
+            if (availableWidth > windowWidth * 0.85) {
+                availableWidth = windowWidth * 0.85;
                 availableHeight = availableWidth / (CONSTANTS.GRID_COUNT_X / CONSTANTS.GRID_COUNT_Y);
             }
         } else {
-            availableWidth = windowWidth * 0.9;
+            availableWidth = windowWidth * 0.92;
             availableHeight = windowHeight * CONSTANTS.PORTRAIT_CANVAS_HEIGHT_RATIO;
         }
         
-        // 动态计算网格尺寸（基于断点）
-        const gridResult = calculateGridForBreakpoint(availableWidth, availableHeight);
+        var gridResult = calculateGridForBreakpoint(availableWidth, availableHeight);
         tileCountX = gridResult.tileCountX;
         tileCountY = gridResult.tileCountY;
         gridSize = gridResult.gridSize;
         
-        console.log(`动态网格: ${tileCountX}×${tileCountY}, cell=${gridSize}px, 可用空间=${availableWidth}×${availableHeight}`);
+        var canvasWidth = gridSize * tileCountX;
+        var canvasHeight = gridSize * tileCountY;
         
-        console.log(`计算出的网格大小: ${gridSize}px`);
-        
-        // 根据网格大小计算画布实际尺寸
-        const canvasWidth = gridSize * tileCountX;
-        const canvasHeight = gridSize * tileCountY;
-        
-        console.log(`画布尺寸: 宽=${canvasWidth}, 高=${canvasHeight}`);
-        
-        // 重置任何可能的变换
         ctx.setTransform(1, 0, 0, 1, 0, 0);
         
-        // 设置画布的CSS尺寸
-        canvas.style.width = `${canvasWidth}px`;
-        canvas.style.height = `${canvasHeight}px`;
+        canvas.style.width = canvasWidth + 'px';
+        canvas.style.height = canvasHeight + 'px';
         
-        // 将画布尺寸设置为CSS变量，便于其他元素使用
-        document.documentElement.style.setProperty('--canvas-width', `${canvasWidth}px`);
-        document.documentElement.style.setProperty('--canvas-height', `${canvasHeight}px`);
-        // 字体自适应缩放（基准宽度375px）
-        document.documentElement.style.setProperty('--font-scale', `${canvasWidth / 375}`);
+        document.documentElement.style.setProperty('--canvas-width', canvasWidth + 'px');
+        document.documentElement.style.setProperty('--canvas-height', canvasHeight + 'px');
+        document.documentElement.style.setProperty('--font-scale', String(canvasWidth / 375));
         
-        // 设置画布的实际像素尺寸，考虑设备像素比例(DPR)
         canvas.width = canvasWidth * dpr;
         canvas.height = canvasHeight * dpr;
-        
-        // 缩放上下文以匹配DPR
         ctx.scale(dpr, dpr);
-        
-        console.log(`实际像素尺寸: 宽=${canvas.width}, 高=${canvas.height}, DPR=${dpr}`);
-        console.log(`最终网格大小: ${gridSize}px`);
-        console.log('画布初始化完成');
-        
-        // 禁用平滑缩放，保持像素清晰
         ctx.imageSmoothingEnabled = false;
         
-        // 确保容器在所有设备上水平居中
-        // 使用flex布局确保完美居中
-        container.style.width = '100%';
-        container.style.padding = '0';
-        container.style.margin = '0 auto';
-        container.style.display = 'flex';
-        container.style.justifyContent = 'center';
-        container.style.alignItems = 'center';
-        
-        // 确保canvas自身也没有任何可能导致不对称的样式
         canvas.style.margin = '0 auto';
         canvas.style.padding = '0';
         canvas.style.display = 'block';
-        
-        // 设置背景颜色
         document.body.style.backgroundColor = CONSTANTS.BACKGROUND_COLOR;
         
-        // 确保score-container和buttons的宽度与canvas一致
-        const scoreContainer = document.querySelector('.score-container');
-        const buttonsContainer = document.querySelector('.buttons');
-        if (scoreContainer) {
-            scoreContainer.style.width = `${canvasWidth}px`;
-        }
-        if (buttonsContainer) {
-            buttonsContainer.style.width = `${canvasWidth}px`;
+        var sc = document.querySelector('.score-container');
+        var bc = document.querySelector('.buttons');
+        var ld = document.getElementById('levelDisplay');
+        var li = document.getElementById('levelInfo');
+        if (sc) sc.style.width = canvasWidth + 'px';
+        if (bc) bc.style.width = canvasWidth + 'px';
+        if (ld) ld.style.width = canvasWidth + 'px';
+        if (li) li.style.width = canvasWidth + 'px';
+        
+        var gc = document.querySelector('.game-container');
+        if (gc) {
+            gc.style.flexDirection = isLandscape ? 'row' : 'column';
         }
     }
 
@@ -1605,8 +2130,10 @@ document.addEventListener('DOMContentLoaded', () => {
         gameOverAnimationState.visibleSegments = 0;
         gameOverAnimationState.boundaryDirection = null;
         
-        // 清空食物数组
+        // 清空食物数组 +  NPC蛆
         foods = [];
+        maggots = [];
+        maggotCorpses = [];
         
         // 初始化蛇的位置
         snake = [];
@@ -1733,8 +2260,9 @@ document.addEventListener('DOMContentLoaded', () => {
         isGameOverHandled = false;
         gamePaused = false;
 
-        // 激活管理员会话
+        // 激活管理员会话 + 启动实时监控
         activateAdminOnGameStart();
+        LocalAdminEngine.startMonitor();
 
         // 加载历史战绩等级
         historyLevel = loadHistoryLevel();
@@ -1902,11 +2430,19 @@ function handleGameOver(boundaryCollision = null) {
     if (AdminSession.session?.isActive) {
         AdminSession.end();
     }
+    // 隐藏流转和管理员按钮
+    var tb = document.getElementById('transferBtn');
+    if (tb) tb.style.display = 'none';
 
     gameStarted = false;
     gameOver = true;
     gamePaused = false;
     
+    // ★ 管理员分析本局 + 停止实时监控
+    var deathCause = boundaryCollision ? 'wall' : 'self';
+    LocalAdminEngine.analyzeSession(score, elapsedSeconds, deathCause);
+    LocalAdminEngine.stopMonitor();
+
     // 保存本局战绩 + 停止计时器
     saveGameResult(score, elapsedSeconds);
     stopElapsedTimer();
@@ -2095,6 +2631,9 @@ function update() {
     } else {
         snake.pop();
     }
+
+    // 更新NPC蛆
+    updateMaggots();
 }
 
 // ================= 游戏渲染 =================
@@ -2113,7 +2652,10 @@ function draw() {
     
     // 绘制食物
     drawFood();
-    
+
+    // 绘制NPC蛆和尸体
+    drawMaggots();
+
     // 游戏结束显示（仅在动画完成后显示覆盖层）
     if (gameOver && !gameOverAnimationState.isActive) {
         ctx.fillStyle = 'rgba(0, 0, 0, 0.5)';
@@ -2550,6 +3092,22 @@ function drawSnake() {
     // 添加暂停/恢复按钮事件
     pauseResumeBtn.addEventListener('click', togglePauseResume);
 
+    // 流转按钮
+    var transferBtn = document.getElementById('transferBtn');
+    if (transferBtn) {
+        transferBtn.addEventListener('click', function(e) {
+            e.stopPropagation();
+            if (gameStarted && !gameOver && window.JSBridge && typeof window.JSBridge.requestTransfer === 'function') {
+                if (!gamePaused) {
+                    gamePaused = true;
+                    pauseResumeBtn.textContent = '继续';
+                    if (gameLoop) { clearInterval(gameLoop); gameLoop = null; }
+                }
+                window.JSBridge.requestTransfer(JSON.stringify(window.getCurrentGameState()));
+            }
+        });
+    }
+
     // 管理员触发按钮
     const adminTriggerBtn = document.getElementById('adminTriggerBtn');
     if (adminTriggerBtn) {
@@ -2573,12 +3131,30 @@ function drawSnake() {
         });
     }
 
-    // 处理窗口大小变化
-    window.addEventListener('resize', () => {
-        if (!gameStarted || gamePaused || gameOver) {
+    // 处理窗口大小变化（游戏中也实时适配）
+    var _resizeDebounce = null;
+    window.addEventListener('resize', function() {
+        if (_resizeDebounce) clearTimeout(_resizeDebounce);
+        _resizeDebounce = setTimeout(function() {
+            var wasRunning = gameStarted && !gamePaused && !gameOver;
+            if (wasRunning && gameLoop) { clearInterval(gameLoop); gameLoop = null; }
             initCanvas();
             draw();
-        }
+            if (wasRunning) {
+                gameLoop = setInterval(function() { update(); draw(); }, gameSpeed);
+            }
+        }, 250);
+    });
+    window.addEventListener('orientationchange', function() {
+        setTimeout(function() {
+            var wasRunning = gameStarted && !gamePaused && !gameOver;
+            if (wasRunning && gameLoop) { clearInterval(gameLoop); gameLoop = null; }
+            initCanvas();
+            draw();
+            if (wasRunning) {
+                gameLoop = setInterval(function() { update(); draw(); }, gameSpeed);
+            }
+        }, 300);
     });
 
     // 页面卸载前，确保当前状态已同步

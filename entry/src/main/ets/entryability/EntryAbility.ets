@@ -549,16 +549,20 @@ export default class EntryAbility extends UIAbility {
     if (boundaryCollision) {
       switch (boundaryCollision) {
         case 'left':
-          modifiedGameState.entryBoundary = 'right'; // 如果碰撞左边界，则从右边界进入
+          modifiedGameState.entryBoundary = 'right';
           break;
         case 'right':
-          modifiedGameState.entryBoundary = 'left'; // 如果碰撞右边界，则从左边界进入
+          modifiedGameState.entryBoundary = 'left';
           break;
         case 'top':
-          modifiedGameState.entryBoundary = 'bottom'; // 如果碰撞上边界，则从下边界进入
+          modifiedGameState.entryBoundary = 'bottom';
           break;
         case 'bottom':
-          modifiedGameState.entryBoundary = 'top'; // 如果碰撞下边界，则从上边界进入
+          modifiedGameState.entryBoundary = 'top';
+          break;
+        case 'transfer':
+          // 自由流转：不设入口边界，目标设备从当前位置继续
+          modifiedGameState.entryBoundary = undefined;
           break;
       }
       
