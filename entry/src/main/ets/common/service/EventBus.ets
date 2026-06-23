@@ -97,7 +97,12 @@ export enum EventTopic {
   GAME_SCORE_UPDATE = 'gameScoreUpdate',
   CONTINUE_GAME_ON_REMOTE = 'continueGameOnRemote',
   SHOW_GAME_OVER_DIALOG = 'showGameOverDialog',
-  BREAKPOINT_CHANGE = 'breakpointChange'
+  BREAKPOINT_CHANGE = 'breakpointChange',
+  // 管理员 AI 系统
+  ADMIN_AI_REQUEST = 'adminAIRequest',       // H5 → 原生：请求调用 DeepSeek
+  ADMIN_AI_RESPONSE = 'adminAIResponse',     // 原生 → H5：DeepSeek 返回结果
+  ADMIN_SESSION_START = 'adminSessionStart', // 管理员会话激活
+  ADMIN_SESSION_END = 'adminSessionEnd'      // 管理员会话结束/复原
 }
 
 export default EventBus.getInstance();

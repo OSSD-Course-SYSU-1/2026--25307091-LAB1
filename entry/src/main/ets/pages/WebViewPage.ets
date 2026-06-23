@@ -8,6 +8,7 @@ import { systemShare, harmonyShare } from '@kit.ShareKit';
 import { fileUri } from '@kit.CoreFileKit';
 import { uniformTypeDescriptor as utd } from '@kit.ArkData';
 import { hilog } from '@kit.PerformanceAnalysisKit';
+import { DeepSeekService, AdminQuestion, AdminOption, AdminAIRequest, GameContext } from '../common/service/DeepSeekService';
 import { common, abilityAccessCtrl } from '@kit.AbilityKit';
 import { fileIo as fs } from '@kit.CoreFileKit';
 import { distributedDeviceManager } from '@kit.DistributedServiceKit';
@@ -59,6 +60,14 @@ interface GameOverEvent {
   score: number;
   gameState?: GameState; // 添加游戏状态数据字段
   boundaryCollision?: string; // 添加边界碰撞信息字段，表示碰撞的是哪个边界（left/right/top/bottom）
+}
+
+// 管理员 AI 请求原始数据（来自 H5）
+class AdminRequestRaw {
+  userMessage: string = '';
+  gameContext: GameContext = new GameContext();
+  grantedCommands: string[] = [];
+  sessionId: string = '';
 }
 
 class NativeClass {
@@ -118,6 +127,23 @@ class NativeClass {
       console.error(`解析游戏状态失败: ${error}`);
     }
   }
+
+  /**
+   * 管理员 AI 请求入口（H5 → 原生）
+   * H5 调用 JSBridge.callDeepSeek(JSON.stringify(request))
+   * 原生层通过 EventBus 异步处理，结果通过 runJavaScript 回传
+   */
+  callDeepSeek(requestJson: string): void {
+    try {
+      const request: AdminRequestRaw = JSON.parse(requestJson) as AdminRequestRaw;
+      console.info('收到管理员AI请求: ' + JSON.stringify(request).substring(0, 150) + '...');
+
+      // 通过 EventBus 转发到 WebViewPage 的监听器处理（需要访问 webController）
+      EventBus.emit(EventTopic.ADMIN_AI_REQUEST, request);
+    } catch (err) {
+      console.error('解析管理员AI请求失败: ' + JSON.stringify(err));
+    }
+  }
 }
 
 @Entry
@@ -137,22 +163,25 @@ export struct WebViewPage {
   // 用于初始化游戏数据的方法
   initGameData(gameData: GameData): void {
     // 首先检查函数是否存在
-    this.webController.runJavaScript('typeof window.initGameDataFromNative === "function"', (error, result) => {
+    const jsCode1: string = 'typeof window.initGameDataFromNative === "function"';
+    this.webController.runJavaScript(jsCode1, (error: Error, result: string) => {
       if (error || result === 'false') {
-        console.error(`initGameDataFromNative函数不存在，将在500ms后重试`);
+        console.error('initGameDataFromNative函数不存在，将在500ms后重试');
         // 如果函数不存在，等待一段时间后重试
         setTimeout(() => {
           this.initGameData(gameData);
         }, 500);
         return;
       }
-      
+
       // 函数存在，调用它
-      this.webController.runJavaScript(`window.initGameDataFromNative(${JSON.stringify(gameData)})`, (error, result) => {
-        if (error) {
-          console.error(`初始化游戏数据失败: ${error.message}`);
+      const gameDataJson: string = JSON.stringify(gameData);
+      const jsCode2: string = 'window.initGameDataFromNative(' + gameDataJson + ')';
+      this.webController.runJavaScript(jsCode2, (error2: Error, result2: string) => {
+        if (error2) {
+          console.error('初始化游戏数据失败: ' + error2.message);
         } else {
-          console.info(`初始化游戏数据成功: ${result}`);
+          console.info('初始化游戏数据成功: ' + result2);
         }
       });
     });
@@ -161,12 +190,13 @@ export struct WebViewPage {
   // 获取当前游戏状态，用于应用接续
   getCurrentGameState(): Promise<GameState> {
     return new Promise((resolve, reject) => {
+      const ctrl: webview.WebviewController = this.webController;
       // 首先检查函数是否存在
-      this.webController.runJavaScript('typeof window.getCurrentGameState === "function"', (error, result) => {
+      ctrl.runJavaScript('typeof window.getCurrentGameState === "function"', (error: Error, result: string) => {
         if (error || result === 'false') {
-          console.error(`getCurrentGameState函数不存在，将使用缓存数据`);
+          console.error('getCurrentGameState函数不存在，将使用缓存数据');
           // 如果函数不存在，使用缓存的游戏状态
-          const cachedState = GameStateManager.getCurrentGameState();
+          const cachedState: GameState | null = GameStateManager.getCurrentGameState();
           if (cachedState) {
             resolve(cachedState);
           } else {
@@ -174,22 +204,22 @@ export struct WebViewPage {
           }
           return;
         }
-        
+
         // 函数存在，调用它
-        this.webController.runJavaScript('window.getCurrentGameState()', (error, result) => {
-          if (error) {
-            console.error(`获取游戏状态失败: ${error.message}`);
-            reject(error);
+        ctrl.runJavaScript('window.getCurrentGameState()', (error2: Error, result2: string) => {
+          if (error2) {
+            console.error('获取游戏状态失败: ' + error2.message);
+            reject(error2);
           } else {
-            console.info(`获取游戏状态成功: ${result}`);
+            console.info('获取游戏状态成功: ' + result2);
             try {
               // 尝试将结果解析为JSON对象
-              const gameState = JSON.parse(result.toString()) as GameState;
+              const gameState: GameState = JSON.parse(result2) as GameState;
               // 实时更新到GameStateManager
               GameStateManager.updateGameState(gameState);
               resolve(gameState);
             } catch (e) {
-              console.error(`解析游戏状态失败: ${e}`);
+              console.error('解析游戏状态失败: ' + JSON.stringify(e));
               reject(e);
             }
           }
@@ -206,135 +236,191 @@ export struct WebViewPage {
       return;
     }
     try {
-      const breakpointData = JSON.stringify({
-        breakpoint: this.currentBreakpoint,
-        orientation: this.orientation,
-        width: this.windowWidth,
-        height: this.windowHeight
-      });
+      const bpObj: Record<string, string | number> = {
+        'breakpoint': this.currentBreakpoint,
+        'orientation': this.orientation,
+        'width': this.windowWidth,
+        'height': this.windowHeight
+      };
+      const breakpointData: string = JSON.stringify(bpObj);
       try {
+        const jsCode: string = '(function(){ try { window.__breakpointData = ' + breakpointData +
+          '; if(window.document.readyState==="complete" && typeof initCanvas==="function"){' +
+          ' initCanvas(); if(typeof snake !== "undefined" && snake.length > 0 && typeof gameStarted !== "undefined" && !gameStarted){ draw(); }' +
+          ' } } catch(e){ console.error("bp inj err:", e); } })()';
         this.webController.runJavaScript(
-          `(function(){ try { window.__breakpointData = ${breakpointData}; if(window.document.readyState==='complete' && typeof initCanvas==='function'){ initCanvas(); if(typeof snake !== 'undefined' && snake.length > 0 && typeof gameStarted !== 'undefined' && !gameStarted){ draw(); } } } catch(e){ console.error('bp inj err:', e); } })()`,
-          (error, result) => {
+          jsCode,
+          (error: Error, result: string) => {
             if (error) {
-              console.error(`注入断点信息到H5失败: ${error.message}`);
+              console.error('注入断点信息到H5失败: ' + error.message);
             }
           }
         );
       } catch (runJsError) {
-        console.error(`runJavaScript 调用异常（WebView可能未就绪）: ${JSON.stringify(runJsError)}`);
+        console.error('runJavaScript 调用异常（WebView可能未就绪）: ' + JSON.stringify(runJsError));
       }
     } catch (e) {
-      console.error(`injectBreakpointToH5 异常: ${JSON.stringify(e)}`);
+      console.error('injectBreakpointToH5 异常: ' + JSON.stringify(e));
     }
   }
 
   aboutToAppear() {
+    const ctrl: webview.WebviewController = this.webController;
+
     // 添加显示游戏结束弹窗的事件监听
     EventBus.on(EventTopic.SHOW_GAME_OVER_DIALOG, () => {
       console.info('收到显示游戏结束弹窗的事件');
-      // 调用WebView的JavaScript方法显示游戏结束弹窗
-      this.webController.runJavaScript('window.showGameOverDialog && window.showGameOverDialog()', (error, result) => {
+      ctrl.runJavaScript('window.showGameOverDialog && window.showGameOverDialog()', (error: Error, result: string) => {
         if (error) {
-          console.error(`显示游戏结束弹窗失败: ${error.message}`);
+          console.error('显示游戏结束弹窗失败: ' + error.message);
         } else {
           console.info('游戏结束弹窗显示成功');
         }
       });
     });
-    
+
     // 检查是否有来自应用接续的数据
     try {
-      // 从AppStorage获取恢复的游戏数据
-      const restoredData = AppStorage.Get<GameData>('restoredGameData');
-      if (restoredData) {
-        console.info(`检测到应用接续数据`);
+      const restoredData: GameData | null = AppStorage.Get<GameData>('restoredGameData') as GameData | null;
+      if (restoredData !== null) {
+        console.info('检测到应用接续数据');
         this.restoredGameData = restoredData;
         this.isGameDataRestored = true;
-        
-        // 清除AppStorage中的数据，避免重复恢复
         AppStorage.Delete('restoredGameData');
       }
-    } catch (error) {
-      console.error(`处理应用接续数据失败: ${error}`);
+    } catch (err) {
+      console.error('处理应用接续数据失败: ' + JSON.stringify(err));
     }
+
     // 注册事件监听
     EventBus.on(EventTopic.INIT_GAME_DATA, (gameData: GameData) => {
-      console.info(`WebViewPage收到初始化游戏数据事件`);
-      if (this.webController) {
+      console.info('WebViewPage收到初始化游戏数据事件');
+      if (ctrl) {
         this.initGameData(gameData);
       } else {
         console.error('WebController尚未初始化，无法初始化游戏数据');
       }
     });
-    
+
     // 监听获取游戏状态请求
     EventBus.on(EventTopic.GET_GAME_STATE, async () => {
-      console.info(`WebViewPage收到获取游戏状态请求`);
+      console.info('WebViewPage收到获取游戏状态请求');
       try {
-        const gameState = await this.getCurrentGameState();
-        console.info(`成功获取游戏状态，发送结果事件`);
-        // 发布游戏状态结果事件
+        const gameState: GameState = await this.getCurrentGameState();
+        console.info('成功获取游戏状态，发送结果事件');
         EventBus.emit(EventTopic.GAME_STATE_RESULT, gameState);
-      } catch (error) {
-        console.error(`获取游戏状态失败: ${error}`);
-        // 尝试使用缓存的游戏状态
-        const cachedState = GameStateManager.getCurrentGameState();
+      } catch (err) {
+        console.error('获取游戏状态失败: ' + JSON.stringify(err));
+        const cachedState: GameState | null = GameStateManager.getCurrentGameState();
         if (cachedState) {
-          console.info(`使用缓存的游戏状态`);
+          console.info('使用缓存的游戏状态');
           EventBus.emit(EventTopic.GAME_STATE_RESULT, cachedState);
         } else {
-          // 发送一个空的游戏状态作为结果
           EventBus.emit(EventTopic.GAME_STATE_RESULT, null);
         }
       }
     });
-    
+
     // 监听游戏结束事件
     EventBus.on(EventTopic.GAME_OVER, (event: GameOverEvent) => {
-      console.info(`WebViewPage收到游戏结束事件，分数: ${event.score}`);
-      
-      // 获取当前游戏状态，确保保存的是最新状态
-      this.getCurrentGameState().then((gameState) => {
-        console.info(`游戏结束时，已保存最新游戏状态: ${JSON.stringify(gameState)}`);
-      }).catch((error: Error) => {
-        console.error(`游戏结束时获取状态失败: ${error}`);
+      console.info('WebViewPage收到游戏结束事件，分数: ' + String(event.score));
+
+      this.getCurrentGameState().then((gameState: GameState) => {
+        console.info('游戏结束时，已保存最新游戏状态: ' + JSON.stringify(gameState));
+      }).catch((err: Error) => {
+        console.error('游戏结束时获取状态失败: ' + JSON.stringify(err));
       });
     });
-    
-    
-    const context = getContext(this) as common.UIAbilityContext;
-    const filesDir = context.filesDir;
+
+    // 监听管理员 AI 请求事件（H5 → 原生转发）
+    const wc: webview.WebviewController = this.webController;
+    EventBus.on(EventTopic.ADMIN_AI_REQUEST, (rawData: AdminRequestRaw) => {
+      console.info('WebViewPage 收到管理员AI请求，开始调用 DeepSeek...');
+      const requestObj: AdminRequestRaw = rawData as AdminRequestRaw;
+
+      // 异步处理 AI 请求
+      this.processAdminAIRequest(requestObj, wc);
+    });
+
+
+    // 文件复制与碰一碰分享注册
+    const ctx: common.UIAbilityContext = getContext(this) as common.UIAbilityContext;
+    const filesDir: string = ctx.filesDir;
     try {
-      [
-        [context.resourceManager.getMediaContentSync($r('app.media.share')), '/share.png']
-      ].forEach(item => {
-        let file = fs.openSync(filesDir + item[1], fs.OpenMode.READ_WRITE | fs.OpenMode.CREATE);
-        let writeLen = fs.writeSync(file.fd, (item[0] as Uint8Array).buffer);
-        hilog.info(DOMAIN, TAG, "write data to file succeed and size is:" + writeLen);
-        fs.closeSync(file);
-      })
+      const mediaResource: Uint8Array = ctx.resourceManager.getMediaContentSync($r('app.media.share')) as Uint8Array;
+      const filePath: string = filesDir + '/share.png';
+      const file: fs.File = fs.openSync(filePath, fs.OpenMode.READ_WRITE | fs.OpenMode.CREATE);
+      const writeLen: number = fs.writeSync(file.fd, mediaResource.buffer);
+      hilog.info(DOMAIN, TAG, 'write data to file succeed and size is:' + String(writeLen));
+      fs.closeSync(file);
     } catch (error) {
-      hilog.warn(DOMAIN, TAG, `媒体文件复制失败（模拟器可能不支持文件操作，碰一碰分享功能不可用）: ${JSON.stringify(error)}`);
+      hilog.warn(DOMAIN, TAG, '媒体文件复制失败（模拟器可能不支持文件操作，碰一碰分享功能不可用）: ' + JSON.stringify(error));
     }
     try {
       harmonyShare.on('knockShare', this.purityCallback);
     } catch (error) {
-      hilog.error(DOMAIN, TAG, `注册碰一碰分享失败（模拟器可能不支持）: ${JSON.stringify(error)}`);
+      hilog.error(DOMAIN, TAG, '注册碰一碰分享失败（模拟器可能不支持）: ' + JSON.stringify(error));
     }
   }
-  private purityCallback(sharableTarget: harmonyShare.SharableTarget) {
+
+  private purityCallback(sharableTarget: harmonyShare.SharableTarget): void {
     hilog.info(DOMAIN, TAG, 'knockShare 分享数据');
     const contextFaker: Context = getContext(this);
-    let filePath = contextFaker.filesDir + '/share.png';
-    let gameDataString = JSON.stringify(GameStateManager.getCurrentGameState());
-    let shareData: systemShare.SharedData = new systemShare.SharedData({
+    const filePath: string = contextFaker.filesDir + '/share.png';
+    const gameDataString: string = JSON.stringify(GameStateManager.getCurrentGameState());
+    const shareData: systemShare.SharedData = new systemShare.SharedData({
       utd: utd.UniformDataType.HYPERLINK,
-      content: "https://boostfield.com/snakeapp/.well-known/applinking.json?data=" + encodeURIComponent(gameDataString),
+      content: 'https://boostfield.com/snakeapp/.well-known/applinking.json?data=' + encodeURIComponent(gameDataString),
       thumbnailUri: fileUri.getUriFromPath(filePath)
     });
     sharableTarget.share(shareData);
   }
+
+  private async processAdminAIRequest(requestObj: AdminRequestRaw, wc: webview.WebviewController): Promise<void> {
+    try {
+      // 构造 AdminAIRequest
+      const aiReq: AdminAIRequest = new AdminAIRequest();
+      aiReq.userMessage = requestObj.userMessage ? requestObj.userMessage : '请根据当前状态给出建议';
+      aiReq.grantedCommands = requestObj.grantedCommands;
+      aiReq.sessionId = requestObj.sessionId;
+      aiReq.gameContext = requestObj.gameContext;
+
+      // 调用 DeepSeekService
+      const aiResult: AdminQuestion = await DeepSeekService.askAdmin(aiReq);
+
+      // 将结果回传给 H5
+      const resultJson: string = JSON.stringify(aiResult);
+      console.info('DeepSeek 返回结果: ' + resultJson.substring(0, 200) + '...');
+
+      wc.runJavaScript(
+        '(function(){ try { if(window.__admin__ && window.__admin__.onAIResponse){ window.__admin__.onAIResponse(' + resultJson + '); } } catch(e){ console.error("admin callback err:", e); } })()',
+        (jsError: Error, jsResult: string) => {
+          if (jsError) {
+            console.error('回传AI结果到H5失败: ' + jsError.message);
+          } else {
+            console.info('AI结果已成功回传H5');
+          }
+        }
+      );
+    } catch (err) {
+      console.error('管理员AI请求处理失败: ' + JSON.stringify(err));
+
+      // 发送错误回 H5
+      const fallback: AdminQuestion = new AdminQuestion();
+      fallback.question = 'AI 暂时无法响应';
+      const skipOpt: AdminOption = new AdminOption();
+      skipOpt.label = '继续游戏';
+      skipOpt.action = 'skip';
+      skipOpt.params = {} as Record<string, string>;
+      skipOpt.description = '不执行任何操作';
+      fallback.options = [skipOpt];
+      const errorJson: string = JSON.stringify(fallback);
+      wc.runJavaScript(
+        '(function(){ try { if(window.__admin__ && window.__admin__.onAIResponse){ window.__admin__.onAIResponse(' + errorJson + '); } } catch(e){} })()'
+      );
+    }
+  }
+
   aboutToDisappear() {
     // 取消所有事件监听
     EventBus.off(EventTopic.INIT_GAME_DATA);
@@ -344,8 +430,8 @@ export struct WebViewPage {
     // 释放分布式资源相关的清理工作
     try {
       harmonyShare.off('knockShare', this.purityCallback);
-    } catch (error) {
-      hilog.error(DOMAIN, TAG, `注销碰一碰分享失败（模拟器可能不支持）: ${JSON.stringify(error)}`);
+    } catch (err) {
+      hilog.error(DOMAIN, TAG, '注销碰一碰分享失败（模拟器可能不支持）: ' + JSON.stringify(err));
     }
   }
 
@@ -429,7 +515,7 @@ export struct WebViewPage {
       .javaScriptProxy({
         object: this.nativeObject,
         name: 'JSBridge',
-        methodList: ['gameOver', 'updateGameState'],
+        methodList: ['gameOver', 'updateGameState', 'callDeepSeek'],
         controller: this.webController
       })
       .onPageEnd(() => {

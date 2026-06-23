@@ -406,6 +406,443 @@ document.addEventListener('DOMContentLoaded', () => {
         boundaryDirection: null
     };
     
+    // ================= 管理员 AI 会话系统 =================
+    // 会话级临时管理员：快照 → 修改 → 对局结束全量复原
+    const AdminSession = {
+        session: null,
+        // 本次对局默认授权命令（可在游戏开始前修改）
+        defaultGrants: ['spawn_food', 'set_speed', 'grow_snake', 'get_stats', 'broadcast'],
+
+        /**
+         * 激活管理员会话（游戏开始时调用）
+         * @param {string[]} grantedCommands - 授权命令列表
+         * @param {object} options - { maxModifications, requireConfirm }
+         */
+        start(grantedCommands, options = {}) {
+            if (this.session?.isActive) {
+                console.warn('管理员会话已在运行中');
+                return;
+            }
+            const cmds = grantedCommands || this.defaultGrants;
+            this.session = {
+                id: Date.now().toString(36),
+                grantedCommands: new Set(cmds),
+                maxMods: options.maxModifications || 20,
+                requireConfirm: options.requireConfirm || false,
+                isActive: true,
+                startedAt: Date.now(),
+                snapshot: this._takeSnapshot(),
+                modifications: [],
+                invincible: false  // 无敌模式标记
+            };
+            console.log(`🔑 管理员会话已激活 | 授权: [${[...this.session.grantedCommands].join(', ')}] | 最大修改: ${this.session.maxMods}`);
+            this._updateTriggerButton();
+        },
+
+        /**
+         * 结束管理员会话 → 全部复原（游戏结束时调用）
+         */
+        end() {
+            if (!this.session?.isActive) return;
+            console.log(`🔒 管理员会话结束，复原 ${this.session.modifications.length} 项修改...`);
+
+            // 关闭无敌模式
+            if (this.session.invincible) {
+                this.session.invincible = false;
+            }
+
+            // 逆序复原（后改的先复原）
+            let restored = 0;
+            for (let i = this.session.modifications.length - 1; i >= 0; i--) {
+                const mod = this.session.modifications[i];
+                if (this._restoreProperty(mod.property, mod.oldValue)) {
+                    restored++;
+                }
+            }
+
+            console.log(`✅ 已复原 ${restored}/${this.session.modifications.length} 项，管理员权限已回收`);
+            this.session = null;
+            this._updateTriggerButton();
+            this._hideModal();
+        },
+
+        /** 检查命令是否被授权 */
+        isCommandGranted(cmd) {
+            return this.session?.isActive && this.session.grantedCommands.has(cmd);
+        },
+
+        /** 检查无敌模式 */
+        isInvincible() {
+            return this.session?.isActive && this.session.invincible === true;
+        },
+
+        /** 记录修改（用于复原） */
+        recordModification(property, oldValue) {
+            if (!this.session?.isActive) return false;
+            if (this.session.modifications.length >= this.session.maxMods) {
+                console.warn('已达单局最大修改次数限制');
+                return false;
+            }
+            // 避免重复记录同一属性（只保留第一次的快照）
+            if (!this.session.modifications.some(m => m.property === property)) {
+                this.session.modifications.push({
+                    property: property,
+                    oldValue: oldValue,
+                    time: Date.now()
+                });
+            }
+            return true;
+        },
+
+        // ========== 快照 ==========
+        _takeSnapshot() {
+            return {
+                learningParams: JSON.parse(JSON.stringify(learningParams)),
+                gameSpeed: gameSpeed,
+                snakeLength: snake.length,
+                foodsCount: foods.length,
+                iterationLevel: iterationLevel,
+                elapsedSeconds: elapsedSeconds
+            };
+        },
+
+        // ========== 复原 ==========
+        _restoreProperty(property, oldValue) {
+            try {
+                switch (property) {
+                    case 'learningParams':
+                        Object.assign(learningParams, oldValue);
+                        saveLearningParams();
+                        break;
+                    case 'gameSpeed':
+                        gameSpeed = oldValue;
+                        // 仅当游戏正在运行且未结束时才重建循环
+                        if (gameLoop && gameStarted && !gameOver) {
+                            clearInterval(gameLoop);
+                            gameLoop = setInterval(() => { update(); draw(); }, gameSpeed);
+                        }
+                        break;
+                    case 'snakeLength':
+                        while (snake.length > oldValue) snake.pop();
+                        break;
+                    case 'foodsCount':
+                        while (foods.length > oldValue) foods.pop();
+                        break;
+                    case 'iterationLevel':
+                        iterationLevel = oldValue;
+                        break;
+                    default:
+                        return false;
+                }
+                return true;
+            } catch (e) {
+                console.error(`复原属性 ${property} 失败:`, e);
+                return false;
+            }
+        },
+
+        // ========== UI ==========
+        _updateTriggerButton() {
+            const btn = document.getElementById('adminTriggerBtn');
+            if (!btn) return;
+            if (this.session?.isActive) {
+                btn.style.display = 'flex';
+                btn.style.opacity = '1';
+            } else {
+                btn.style.display = 'none';
+            }
+        },
+
+        _hideModal() {
+            const modal = document.getElementById('adminModal');
+            if (modal) modal.style.display = 'none';
+        }
+    };
+
+    // ========== 管理员命令执行器 ==========
+    const AdminCommands = {
+        /** 生成食物 */
+        spawn_food(params) {
+            if (!AdminSession.isCommandGranted('spawn_food')) return { ok: false, msg: '⛔ 未授权 spawn_food' };
+            AdminSession.recordModification('foodsCount', foods.length);
+
+            const type = params.type || 'normal';
+            const count = Math.min(params.count || 1, 5);
+            for (let i = 0; i < count; i++) {
+                const newFood = {
+                    x: Math.floor(Math.random() * tileCountX),
+                    y: Math.floor(Math.random() * tileCountY),
+                    type: type
+                };
+                if (type === 'normal') {
+                    const idx = Math.floor(Math.random() * CONSTANTS.FOOD_IMAGES.length);
+                    newFood.imageKey = `FOOD_${idx}`;
+                    newFood.imageIndex = idx;
+                }
+                // 避开蛇身和已有食物
+                let attempts = 0;
+                while (attempts < 50) {
+                    const overlapSnake = snake.some(s => s.x === newFood.x && s.y === newFood.y);
+                    const overlapFood = foods.some(f => f.x === newFood.x && f.y === newFood.y);
+                    if (!overlapSnake && !overlapFood) break;
+                    newFood.x = Math.floor(Math.random() * tileCountX);
+                    newFood.y = Math.floor(Math.random() * tileCountY);
+                    attempts++;
+                }
+                foods.push(newFood);
+            }
+            draw();
+            return { ok: true, msg: `🍎 已生成 ${count} 个${type === 'shrink' ? '有毒' : ''}食物` };
+        },
+
+        /** 调整游戏速度 */
+        set_speed(params) {
+            if (!AdminSession.isCommandGranted('set_speed')) return { ok: false, msg: '⛔ 未授权 set_speed' };
+            AdminSession.recordModification('gameSpeed', gameSpeed);
+
+            gameSpeed = Math.max(80, Math.min(800, params.speed || CONSTANTS.GAME_SPEED));
+            if (gameLoop) {
+                clearInterval(gameLoop);
+                gameLoop = setInterval(() => { update(); draw(); }, gameSpeed);
+            }
+            return { ok: true, msg: `⚡ 游戏速度已调整为 ${gameSpeed}ms/步` };
+        },
+
+        /** 增长蛇身 */
+        grow_snake(params) {
+            if (!AdminSession.isCommandGranted('grow_snake')) return { ok: false, msg: '⛔ 未授权 grow_snake' };
+            AdminSession.recordModification('snakeLength', snake.length);
+
+            const segments = Math.min(params.segments || 1, 10);
+            const tail = snake[snake.length - 1];
+            for (let i = 0; i < segments; i++) {
+                snake.push({ x: tail.x, y: tail.y });
+            }
+            draw();
+            return { ok: true, msg: `📏 蛇身 +${segments} 节（当前 ${snake.length} 节）` };
+        },
+
+        /** 缩短蛇身 */
+        shrink_snake(params) {
+            if (!AdminSession.isCommandGranted('shrink_snake')) return { ok: false, msg: '⛔ 未授权 shrink_snake' };
+            AdminSession.recordModification('snakeLength', snake.length);
+
+            const segments = Math.min(params.segments || 1, snake.length - 2);
+            for (let i = 0; i < segments; i++) snake.pop();
+            draw();
+            return { ok: true, msg: `✂️ 蛇身 -${segments} 节（当前 ${snake.length} 节）` };
+        },
+
+        /** 切换无敌模式 */
+        toggle_invincible(params) {
+            if (!AdminSession.isCommandGranted('toggle_invincible')) return { ok: false, msg: '⛔ 未授权 toggle_invincible' };
+            if (!AdminSession.session) return { ok: false, msg: '会话未激活' };
+
+            AdminSession.session.invincible = !AdminSession.session.invincible;
+            const status = AdminSession.session.invincible ? '🛡️ 无敌模式已开启' : '🛡️ 无敌模式已关闭';
+            return { ok: true, msg: status };
+        },
+
+        /** 查询统计 */
+        get_stats(params) {
+            if (!AdminSession.isCommandGranted('get_stats')) return { ok: false, msg: '⛔ 未授权 get_stats' };
+            const lv = getIterationLevel();
+            const info = [
+                `📊 分数: ${score}`,
+                `📈 等级: Lv.${lv}`,
+                `🐍 蛇长: ${snake.length} 节`,
+                `⏱️ 时间: ${elapsedSeconds}s`,
+                `⚡ 速度: ${gameSpeed}ms`,
+                `🍽️ 食物: ${foods.length} 个`,
+                `🧠 AI分阶: ${learningParams.scoreStep}`,
+                `☠️ 毒概率: ${Math.round(learningParams.shrinkProb * 100)}%`
+            ];
+            if (AdminSession.session?.invincible) info.push('🛡️ 无敌: 开启');
+            return { ok: true, msg: info.join('\n') };
+        },
+
+        /** 广播消息 */
+        broadcast(params) {
+            if (!AdminSession.isCommandGranted('broadcast')) return { ok: false, msg: '⛔ 未授权 broadcast' };
+            const msg = params.message || '管理员发来了一条消息';
+            showScoreAnimation(
+                canvas.width / (2 * (window.devicePixelRatio || 1)),
+                canvas.height / (3 * (window.devicePixelRatio || 1)),
+                msg, '#66AAEE'
+            );
+            return { ok: true, msg: '📢 消息已广播' };
+        }
+    };
+
+    // ========== AI 问答交互 ==========
+    let _adminPausedGame = false;  // 标记是否由管理员触发的暂停
+
+    /** 玩家点击管理员按钮 → 暂停游戏 → 请求 AI */
+    function requestAdminQA() {
+        if (!AdminSession.session?.isActive) {
+            console.warn('管理员会话未激活');
+            return;
+        }
+        // 记录暂停前状态，仅当游戏正在运行时才由管理员暂停
+        _adminPausedGame = (gameStarted && !gameOver && !gamePaused);
+        if (_adminPausedGame) {
+            gamePaused = true;
+            pauseResumeBtn.textContent = '继续';
+            if (gameLoop) { clearInterval(gameLoop); gameLoop = null; }
+        }
+
+        // 显示加载状态
+        const modal = document.getElementById('adminModal');
+        const loadingEl = document.getElementById('adminLoading');
+        const questionBox = document.getElementById('adminQuestionBox');
+        if (modal) modal.style.display = 'flex';
+        if (loadingEl) loadingEl.style.display = 'block';
+        if (questionBox) questionBox.style.display = 'none';
+
+        // 更新授权显示
+        const grantsEl = document.getElementById('adminGrants');
+        if (grantsEl && AdminSession.session) {
+            grantsEl.textContent = `🔑 ${[...AdminSession.session.grantedCommands].slice(0, 3).join(', ')}`;
+        }
+
+        // 构建请求发送给原生层
+        const request = {
+            userMessage: '请根据当前游戏状态给出建议',
+            gameContext: {
+                score: score,
+                level: getIterationLevel(),
+                snakeLength: snake.length,
+                elapsedSeconds: elapsedSeconds,
+                learningParams: learningParams,
+                foodsCount: foods.length,
+                gameSpeed: gameSpeed
+            },
+            grantedCommands: [...AdminSession.session.grantedCommands],
+            sessionId: AdminSession.session.id
+        };
+
+        if (window.JSBridge && typeof window.JSBridge.callDeepSeek === 'function') {
+            window.JSBridge.callDeepSeek(JSON.stringify(request));
+            console.log('📡 已发送管理员AI请求');
+        } else {
+            // 无 JSBridge 时使用降级问答
+            console.warn('JSBridge 不可用，使用降级问答');
+            const fallback = buildFallbackQuestion();
+            showAdminQuestion(fallback);
+        }
+    }
+
+    /** 原生层回调：AI 返回结果 */
+    window.__admin__ = {
+        onAIResponse: function(aiResult) {
+            console.log('📩 收到AI回复:', aiResult);
+            showAdminQuestion(aiResult);
+        }
+    };
+
+    /** 构建降级问答（AI 不可用时） */
+    function buildFallbackQuestion() {
+        const cmds = AdminSession.session?.grantedCommands || new Set();
+        const options = [];
+        if (cmds.has('spawn_food')) {
+            options.push({ label: '🍎 生成一个食物', action: 'spawn_food', params: { type: 'normal', count: 1 }, description: '在随机位置生成普通食物' });
+        }
+        if (cmds.has('grow_snake')) {
+            options.push({ label: '📏 蛇身 +2 节', action: 'grow_snake', params: { segments: 2 }, description: '让蛇变长 2 节' });
+        }
+        if (cmds.has('get_stats')) {
+            options.push({ label: '📊 查看状态', action: 'get_stats', params: {}, description: '查看当前游戏统计' });
+        }
+        options.push({ label: '👋 继续游戏', action: 'skip', params: {}, description: '不执行任何操作' });
+        return {
+            question: '（离线模式）要做什么调整？',
+            options: options
+        };
+    }
+
+    /** 显示管理员问答弹窗 */
+    function showAdminQuestion(aiResult) {
+        const loadingEl = document.getElementById('adminLoading');
+        const questionBox = document.getElementById('adminQuestionBox');
+        const questionEl = document.getElementById('adminQuestion');
+        const optionsEl = document.getElementById('adminOptions');
+
+        if (loadingEl) loadingEl.style.display = 'none';
+        if (questionBox) questionBox.style.display = 'block';
+        if (questionEl) questionEl.textContent = aiResult.question || '需要调整吗？';
+        if (optionsEl) {
+            optionsEl.innerHTML = '';
+            (aiResult.options || []).forEach(opt => {
+                const btn = document.createElement('button');
+                btn.className = 'admin-option-btn' + (opt.action === 'skip' ? ' skip-btn' : '');
+                btn.innerHTML = `<span class="option-label">${opt.label || opt.action}</span>`;
+                if (opt.description) {
+                    btn.innerHTML += `<span class="option-desc">${opt.description}</span>`;
+                }
+                btn.addEventListener('click', () => onPlayerSelectOption(opt));
+                optionsEl.appendChild(btn);
+            });
+        }
+
+        const modal = document.getElementById('adminModal');
+        if (modal) modal.style.display = 'flex';
+    }
+
+    /** 玩家选择了某个选项 */
+    function onPlayerSelectOption(option) {
+        console.log(`👆 玩家选择: ${option.label} → ${option.action}`);
+
+        // 隐藏弹窗
+        AdminSession._hideModal();
+
+        // skip 直接恢复游戏
+        if (option.action === 'skip') {
+            resumeAfterAdmin();
+            return;
+        }
+
+        // 执行命令
+        const executor = AdminCommands[option.action];
+        if (typeof executor === 'function') {
+            try {
+                const result = executor(option.params || {});
+                if (result.ok) {
+                    // 显示执行结果
+                    showScoreAnimation(
+                        canvas.width / (2 * (window.devicePixelRatio || 1)),
+                        canvas.height / (2 * (window.devicePixelRatio || 1)),
+                        result.msg, '#66AAEE'
+                    );
+                } else {
+                    console.warn('命令执行被拒绝:', result.msg);
+                }
+            } catch (e) {
+                console.error('命令执行异常:', e);
+            }
+        }
+
+        // 恢复游戏
+        resumeAfterAdmin();
+    }
+
+    /** 管理员问答结束后恢复游戏（仅恢复由管理员暂停的游戏） */
+    function resumeAfterAdmin() {
+        if (_adminPausedGame && gameStarted && !gameOver && gamePaused) {
+            gamePaused = false;
+            pauseResumeBtn.textContent = '暂停';
+            gameSpeed = CONSTANTS.GAME_SPEED;
+            gameLoop = setInterval(() => { update(); draw(); }, gameSpeed);
+        }
+        _adminPausedGame = false;
+    }
+
+    // 在游戏开始后激活管理员会话
+    function activateAdminOnGameStart() {
+        if (!AdminSession.session?.isActive) {
+            AdminSession.start();
+        }
+    }
+
     // ================= JSBridge 相关功能 =================
     
     // 调整蛇的位置以确保安全
@@ -1153,6 +1590,11 @@ document.addEventListener('DOMContentLoaded', () => {
 
     // 重置游戏状态
     function resetGame() {
+        // ⚠️ 先结束管理员会话（双重保险，handleGameOver 也会调用）
+        if (AdminSession.session?.isActive) {
+            AdminSession.end();
+        }
+
         // 清除可能的游戏结束动画
         if (gameOverAnimationState.animationTimer) {
             clearInterval(gameOverAnimationState.animationTimer);
@@ -1246,7 +1688,8 @@ document.addEventListener('DOMContentLoaded', () => {
             gamePaused = true;
             pauseResumeBtn.textContent = '继续';
             clearInterval(gameLoop);
-            
+            _adminPausedGame = false;  // 手动暂停优先，取消管理员自动恢复
+
             // 暂停时同步一次状态
             syncGameStateToNative(true);
         }
@@ -1289,7 +1732,10 @@ document.addEventListener('DOMContentLoaded', () => {
         gameOver = false;
         isGameOverHandled = false;
         gamePaused = false;
-        
+
+        // 激活管理员会话
+        activateAdminOnGameStart();
+
         // 加载历史战绩等级
         historyLevel = loadHistoryLevel();
         iterationLevel = getIterationLevel();
@@ -1451,7 +1897,12 @@ function handleGameOver(boundaryCollision = null) {
     // 防止重复触发游戏结束逻辑
     if (isGameOverHandled) return;
     isGameOverHandled = true;
-    
+
+    // ⚠️ 第一件事：结束管理员会话，复原所有临时修改
+    if (AdminSession.session?.isActive) {
+        AdminSession.end();
+    }
+
     gameStarted = false;
     gameOver = true;
     gamePaused = false;
@@ -1569,23 +2020,37 @@ function update() {
 
     // 检查碰撞边界
     if (head.x < 0 || head.x >= tileCountX || head.y < 0 || head.y >= tileCountY) {
-        // 记录碰撞的边界方向
-        let boundaryCollision = null;
-        if (head.x < 0) boundaryCollision = 'left';
-        else if (head.x >= tileCountX) boundaryCollision = 'right';
-        else if (head.y < 0) boundaryCollision = 'top';
-        else if (head.y >= tileCountY) boundaryCollision = 'bottom';
-        
-        handleGameOver(boundaryCollision);
-        return;
+        // 🛡️ 无敌模式：穿墙环绕，不触发游戏结束
+        if (AdminSession.isInvincible()) {
+            if (head.x < 0) head.x = tileCountX - 1;
+            else if (head.x >= tileCountX) head.x = 0;
+            else if (head.y < 0) head.y = tileCountY - 1;
+            else if (head.y >= tileCountY) head.y = 0;
+            console.log('🛡️ 无敌模式：穿墙环绕');
+        } else {
+            // 记录碰撞的边界方向
+            let boundaryCollision = null;
+            if (head.x < 0) boundaryCollision = 'left';
+            else if (head.x >= tileCountX) boundaryCollision = 'right';
+            else if (head.y < 0) boundaryCollision = 'top';
+            else if (head.y >= tileCountY) boundaryCollision = 'bottom';
+
+            handleGameOver(boundaryCollision);
+            return;
+        }
     }
 
     // 检查碰撞自身（在渐进式渲染期间跳过自身碰撞检测）
     if (!progressiveRenderState.isActive) {
         for (let i = 0; i < snake.length; i++) {
             if (snake[i].x === head.x && snake[i].y === head.y) {
-                handleGameOver();
-                return;
+                // 🛡️ 无敌模式：忽略自身碰撞
+                if (AdminSession.isInvincible()) {
+                    console.log('🛡️ 无敌模式：忽略自身碰撞');
+                } else {
+                    handleGameOver();
+                    return;
+                }
             }
         }
     } else {
@@ -2084,6 +2549,29 @@ function drawSnake() {
     
     // 添加暂停/恢复按钮事件
     pauseResumeBtn.addEventListener('click', togglePauseResume);
+
+    // 管理员触发按钮
+    const adminTriggerBtn = document.getElementById('adminTriggerBtn');
+    if (adminTriggerBtn) {
+        adminTriggerBtn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            if (gameStarted && !gameOver) {
+                requestAdminQA();
+            }
+        });
+    }
+
+    // 管理员弹窗：点击遮罩层关闭（等同选择"跳过"）
+    const adminModal = document.getElementById('adminModal');
+    if (adminModal) {
+        adminModal.addEventListener('click', (e) => {
+            if (e.target === adminModal) {
+                // 点击的是遮罩层，不是内容区
+                AdminSession._hideModal();
+                resumeAfterAdmin();
+            }
+        });
+    }
 
     // 处理窗口大小变化
     window.addEventListener('resize', () => {
