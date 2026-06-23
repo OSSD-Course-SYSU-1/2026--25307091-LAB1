@@ -5,7 +5,7 @@ const DOMAIN = 0x0000;
 const TAG = 'DeepSeekService';
 
 // ==================== 配置 ====================
-const DEEPSEEK_API_KEY: string = 'sk-your-deepseek-api-key-here';
+const DEEPSEEK_API_KEY: string = 'sk-26b1f7f51b704146b4faf21f91ddab76';
 const DEEPSEEK_API_URL: string = 'https://api.deepseek.com/chat/completions';
 const REQUEST_TIMEOUT_MS: number = 15000;
 
