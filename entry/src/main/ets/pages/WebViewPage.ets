@@ -1,6 +1,6 @@
 import { webview } from '@kit.ArkWeb';
 import router from '@ohos.router';
-import { AppStorageV2, promptAction } from '@kit.ArkUI';
+import { promptAction } from '@kit.ArkUI';
 import { GameData, SnakeSegment, FoodPosition, GameState } from '../common/model/GameData';
 import EventBus, { EventTopic } from '../common/service/EventBus';
 import GameStateManager from '../common/service/GameStateManager';

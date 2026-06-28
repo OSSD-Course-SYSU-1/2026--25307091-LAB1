@@ -1,6 +1,6 @@
-import { AbilityConstant, Caller, common, ConfigurationConstant, UIAbility, Want } from '@kit.AbilityKit';
+import { AbilityConstant, Caller, common, Configuration, ConfigurationConstant, UIAbility, Want } from '@kit.AbilityKit';
 import { hilog } from '@kit.PerformanceAnalysisKit';
-import { promptAction, window, AppStorageV2 } from '@kit.ArkUI';
+import { promptAction, window } from '@kit.ArkUI';
 import { GameData, SnakeSegment, FoodPosition, GameState } from '../common/model/GameData';
 import EventBus, { EventTopic } from '../common/service/EventBus';
 import GameStateManager from '../common/service/GameStateManager';
@@ -19,6 +19,14 @@ interface GameOverEvent {
   boundaryCollision?: string; // 添加边界碰撞信息字段，表示碰撞的是哪个边界（left/right/top/bottom）
 }
 
+// 断点信息接口
+interface BreakpointInfo {
+  breakpoint: string;
+  width: number;
+  height: number;
+  orientation: string;
+}
+
 const DOMAIN = 0x0000;
 const TAG = 'EntryAbility';
 
@@ -29,6 +37,7 @@ let gameDataObject: distributedDataObject.DataObject | undefined;
 
 let continueGameDataObject: distributedDataObject.DataObject | undefined;
 let lastProcessedGameData: string = ''; // 添加防重复处理的变量
+let lastProcessedVersion: number = 0;     // 记录已处理的最高版本号，防止状态回滚
 
 class RestoredGameData {
   gameData: string | undefined;
@@ -37,7 +46,7 @@ class RestoredGameData {
   }
 }
 
-interface GeneratedObjectLiteralInterface_1 {
+interface DistributedGameStateData {
   snake: SnakeSegment[];
   food: FoodPosition;
   direction: string;
@@ -51,6 +60,7 @@ interface GeneratedObjectLiteralInterface_1 {
   autoStart: boolean;
   boundaryCollision: string | undefined;
   entryBoundary: string | undefined;
+  stateVersion: number;
   receivedAt: number;
 }
 
@@ -134,56 +144,70 @@ export default class EntryAbility extends UIAbility {
       hilog.info(DOMAIN, TAG, '跨设备分布式数据同步，创建分布式数据对象');
       // 3.1 创建分布式数据对象实例
       let data = new RestoredGameData(undefined);
-      gameDataObject = distributedDataObject.create(this.context, data);
+      try {
+        gameDataObject = distributedDataObject.create(this.context, data);
+      } catch (error) {
+        hilog.error(DOMAIN, TAG, `创建分布式数据对象失败（模拟器可能不支持）: ${JSON.stringify(error)}`);
+        gameDataObject = undefined;
+      }
 
-      // 3.2 注册数据变更监听
-      gameDataObject.on('change', (sessionId: string, fields: Array<string>) => {
-        hilog.info(DOMAIN, TAG, `分布式数据对象变更，sessionId: ${sessionId}, fields: ${JSON.stringify(fields)}`);
+      if (gameDataObject) {
+        // 3.2 注册数据变更监听
+        gameDataObject.on('change', (sessionId: string, fields: Array<string>) => {
+          hilog.info(DOMAIN, TAG, `分布式数据对象变更，sessionId: ${sessionId}, fields: ${JSON.stringify(fields)}`);
 
-        // 检查是否有 gameData 字段更新
-        if (fields.includes('gameData')) {
-          const gameDataString = gameDataObject!['gameData'] as string;
-          if (gameDataString && gameDataString !== lastProcessedGameData) {
-            hilog.info(DOMAIN, TAG, `收到分布式游戏数据: ${gameDataString}`);
-            lastProcessedGameData = gameDataString; // 记录已处理的数据
-            
-            try {
-              const gameData = JSON.parse(gameDataString) as GameData;
+          // 检查是否有 gameData 字段更新
+          if (fields.includes('gameData')) {
+            const gameDataString = gameDataObject!['gameData'] as string;
+            if (gameDataString && gameDataString !== lastProcessedGameData) {
+              hilog.info(DOMAIN, TAG, `收到分布式游戏数据: ${gameDataString}`);
+              lastProcessedGameData = gameDataString; // 记录已处理的数据
               
-              // 添加接收时间戳，避免重复处理
-              // 手动创建新对象，避免使用Object.assign()
-              const dataWithTimestamp: GeneratedObjectLiteralInterface_1 = {
-                snake: gameData.snake,
-                food: gameData.food,
-                direction: gameData.direction,
-                nextDirection: gameData.nextDirection,
-                score: gameData.score,
-                speed: gameData.speed,
-                gameStarted: gameData.gameStarted,
-                gameOver: gameData.gameOver,
-                gamePaused: gameData.gamePaused,
-                highScore: gameData.highScore,
-                autoStart: gameData.autoStart,
-                boundaryCollision: gameData.boundaryCollision,
-                entryBoundary: gameData.entryBoundary,
-                receivedAt: Date.now()
-              };
-              
-              // 将游戏数据存入AppStorage，供WebViewPage使用
-              AppStorage.SetOrCreate('restoredGameData', dataWithTimestamp);
-              // 通过EventBus发送初始化游戏数据的事件
-              EventBus.emit(EventTopic.INIT_GAME_DATA, dataWithTimestamp);
-              hilog.info(DOMAIN, TAG, `已通过事件总线发送初始化游戏状态事件，时间戳: ${dataWithTimestamp.receivedAt}`);
-            } catch (error) {
-              hilog.error(DOMAIN, TAG, `解析分布式游戏数据失败: ${JSON.stringify(error)}`);
+              try {
+                const gameData = JSON.parse(gameDataString) as GameData;
+                
+                // 版本号校验：忽略低版本数据，防止分布式状态回滚
+                const incomingVersion = gameData.stateVersion || 0;
+                if (incomingVersion > 0 && incomingVersion <= lastProcessedVersion) {
+                  hilog.info(DOMAIN, TAG, `忽略低版本数据: 收到=${incomingVersion}, 当前=${lastProcessedVersion}`);
+                  return; // 跳过后续处理
+                }
+                lastProcessedVersion = incomingVersion;
+                
+                // 添加接收时间戳，避免重复处理
+                const dataWithTimestamp: DistributedGameStateData = {
+                  snake: gameData.snake,
+                  food: gameData.food,
+                  direction: gameData.direction,
+                  nextDirection: gameData.nextDirection,
+                  score: gameData.score,
+                  speed: gameData.speed,
+                  gameStarted: gameData.gameStarted,
+                  gameOver: gameData.gameOver,
+                  gamePaused: gameData.gamePaused,
+                  highScore: gameData.highScore,
+                  autoStart: gameData.autoStart,
+                  boundaryCollision: gameData.boundaryCollision,
+                  entryBoundary: gameData.entryBoundary,
+                  stateVersion: gameData.stateVersion || 0,
+                  receivedAt: Date.now()
+                };
+                
+                // 将游戏数据存入AppStorage，供WebViewPage使用
+                AppStorage.SetOrCreate('restoredGameData', dataWithTimestamp);
+                // 通过EventBus发送初始化游戏数据的事件
+                EventBus.emit(EventTopic.INIT_GAME_DATA, dataWithTimestamp);
+                hilog.info(DOMAIN, TAG, `已通过事件总线发送初始化游戏状态事件，时间戳: ${dataWithTimestamp.receivedAt}`);
+              } catch (error) {
+                hilog.error(DOMAIN, TAG, `解析分布式游戏数据失败: ${JSON.stringify(error)}`);
+              }
+            } else if (gameDataString === lastProcessedGameData) {
+              hilog.info(DOMAIN, TAG, '收到重复的游戏数据，跳过处理');
+            } else if (!gameDataString) {
+              hilog.info(DOMAIN, TAG, '收到空的游戏数据，跳过处理');
             }
-          } else if (gameDataString === lastProcessedGameData) {
-            hilog.info(DOMAIN, TAG, '收到重复的游戏数据，跳过处理');
-          } else if (!gameDataString) {
-            hilog.info(DOMAIN, TAG, '收到空的游戏数据，跳过处理');
           }
-        }
-      });
+        });
 
       // 添加状态监听
       gameDataObject.on('status', (sessionId: string, networkId: string, status: string) => {
@@ -245,7 +269,13 @@ export default class EntryAbility extends UIAbility {
     }
     // 2.1 调用create接口创建并得到一个分布式数据对象实例
     let restoredGameData = new RestoredGameData(undefined);
-    continueGameDataObject = distributedDataObject.create(this.context, restoredGameData);
+    try {
+      continueGameDataObject = distributedDataObject.create(this.context, restoredGameData);
+    } catch (error) {
+      hilog.error(DOMAIN, TAG, `创建接续分布式数据对象失败（模拟器可能不支持）: ${JSON.stringify(error)}`);
+      continueGameDataObject = undefined;
+      return;
+    }
 
     // 2.2 注册恢复状态监听。收到状态为'restored'的回调通知时，表示接收端分布式数据对象已恢复发起端保存过来的数据（有资产数据时，对应的文件也迁移过来了）
     continueGameDataObject.on('status', (sessionId: string, networkId: string, status: string) => {
@@ -364,7 +394,12 @@ export default class EntryAbility extends UIAbility {
         const restoredGameData = new RestoredGameData(gameDataStr);
 
         // 1.1 调用create接口创建并得到一个分布式数据对象实例
-        continueGameDataObject = distributedDataObject.create(this.context, restoredGameData);
+        try {
+          continueGameDataObject = distributedDataObject.create(this.context, restoredGameData);
+        } catch (error) {
+          hilog.error(DOMAIN, TAG, `创建接续分布式数据对象失败（模拟器可能不支持）: ${JSON.stringify(error)}`);
+          return AbilityConstant.OnContinueResult.REJECT;
+        }
 
         // 1.2 调用genSessionId接口创建一个sessionId，调用setSessionId接口设置同步的sessionId，并将这个sessionId放入wantParam
         let continueSessionId = distributedDataObject.genSessionId();
@@ -678,7 +713,13 @@ export default class EntryAbility extends UIAbility {
       let restoredGameData = new RestoredGameData(JSON.stringify(gameData));
 
       hilog.info(DOMAIN, TAG, '创建分布式数据对象...');
-      gameDataObject = distributedDataObject.create(context, restoredGameData);
+      try {
+        gameDataObject = distributedDataObject.create(context, restoredGameData);
+      } catch (error) {
+        hilog.error(DOMAIN, TAG, `创建分布式数据对象失败（模拟器可能不支持）: ${JSON.stringify(error)}`);
+        gameDataObject = undefined;
+        return;
+      }
 
       // 2.2 注册数据变更监听
       gameDataObject.on('change', (sessionId: string, fields: Array<string>) => {
@@ -698,7 +739,7 @@ export default class EntryAbility extends UIAbility {
               const gameData = JSON.parse(gameDataString) as GameData;
               
               // 添加接收时间戳，避免重复处理
-              const dataWithTimestamp: GeneratedObjectLiteralInterface_1 = {
+              const dataWithTimestamp: DistributedGameStateData = {
                 snake: gameData.snake,
                 food: gameData.food,
                 direction: gameData.direction,
@@ -712,6 +753,7 @@ export default class EntryAbility extends UIAbility {
                 autoStart: gameData.autoStart,
                 boundaryCollision: gameData.boundaryCollision,
                 entryBoundary: gameData.entryBoundary,
+                stateVersion: gameData.stateVersion || 0,
                 receivedAt: Date.now()
               };
               
