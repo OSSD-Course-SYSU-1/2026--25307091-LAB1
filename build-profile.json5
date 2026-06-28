@@ -1,0 +1,55 @@
+{
+  "app": {
+    "signingConfigs": [
+      {
+        "name": "default",
+        "type": "HarmonyOS",
+        "material": {
+          "storeFile": "/Users/qiukaiyu/Documents/dev/rd-front-end/SnakeGame/test.p12",
+          "storePassword": "0000001872F6E0FEBCC8F1F7D1B7D0E0E46E6F282683EF1954265CC0781F90A9C90C8B028D663A9F",
+          "keyAlias": "test",
+          "keyPassword": "000000184EDA74D45F160BCBED482232439CEA6833EAE0D49EA3BF8B9E615D9E7C87804B22ED14E6",
+          "signAlg": "SHA256withECDSA",
+          "profile": "/Users/qiukaiyu/Documents/dev/rd-front-end/SnakeGame/snakedebugprofileDebug.p7b",
+          "certpath": "/Users/qiukaiyu/Documents/dev/rd-front-end/SnakeGame/snakedebugcert.cer"
+        }
+      }
+    ],
+    "products": [
+      {
+        "name": "default",
+        "signingConfig": "default",
+        "compatibleSdkVersion": "5.0.3(15)",
+        "runtimeOS": "HarmonyOS",
+        "buildOption": {
+          "strictMode": {
+            "caseSensitiveCheck": true,
+            "useNormalizedOHMUrl": true
+          }
+        }
+      }
+    ],
+    "buildModeSet": [
+      {
+        "name": "debug",
+      },
+      {
+        "name": "release"
+      }
+    ]
+  },
+  "modules": [
+    {
+      "name": "entry",
+      "srcPath": "./entry",
+      "targets": [
+        {
+          "name": "default",
+          "applyToProducts": [
+            "default"
+          ]
+        }
+      ]
+    }
+  ]
+}

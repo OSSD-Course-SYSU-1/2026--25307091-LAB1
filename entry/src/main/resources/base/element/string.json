@@ -1,0 +1,20 @@
+{
+  "string": [
+    {
+      "name": "module_desc",
+      "value": "module description"
+    },
+    {
+      "name": "EntryAbility_desc",
+      "value": "description"
+    },
+    {
+      "name": "EntryAbility_label",
+      "value": "Genji掘金大冒险"
+    },
+    {
+      "name": "permission_reason_distributed_datasync",
+      "value": "permission_reason_distributed_datasync"
+    }
+  ]
+}
